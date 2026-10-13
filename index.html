@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MotionFolio</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="css/editor.css">
+</head>
+<body>
+<header id="toolbar">
+  <div class="tb-group">
+    <button class="tb" data-act="new" data-ic="doc" title="新規書類">新規</button>
+    <button class="tb" data-act="open" data-ic="open" title="プロジェクトを開く (Ctrl+O)">開く</button>
+    <button class="tb" data-act="save" data-ic="save" title="プロジェクトを保存 (Ctrl+S)">保存</button>
+  </div>
+  <div class="tb-sep"></div>
+  <div class="tb-group">
+    <button class="tb" data-act="undo" data-ic="undo" title="取り消す (Ctrl+Z)">取り消す</button>
+    <button class="tb" data-act="redo" data-ic="redo" title="やり直す (Ctrl+Shift+Z)">やり直す</button>
+  </div>
+  <div class="tb-spacer"></div>
+  <div class="tb-group">
+    <button class="tb" data-act="pageAdd" data-ic="doc" title="テンプレートからページを追加">ページ</button>
+    <button class="tb" data-act="text" data-ic="text" title="テキストを追加">テキスト</button>
+    <button class="tb" data-act="shape" data-ic="shape" title="図形を追加">図形</button>
+    <button class="tb" data-act="image" data-ic="image" title="画像を追加">画像</button>
+    <button class="tb" data-act="model" data-ic="cube" title="glb アニメーションを追加">3D</button>
+  </div>
+  <div class="tb-spacer"></div>
+  <div class="tb-group">
+    <select id="zoomSel" title="表示倍率 (Ctrl+ホイール)">
+      <option value="fit">フィット</option>
+      <option value="0.5">50%</option>
+      <option value="0.75">75%</option>
+      <option value="1">100%</option>
+      <option value="1.25">125%</option>
+      <option value="1.5">150%</option>
+      <option value="2">200%</option>
+    </select>
+  </div>
+  <div class="tb-sep"></div>
+  <div class="tb-group">
+    <button class="tb" data-act="preview" data-ic="play" title="書き出し結果を新しいタブで確認">プレビュー</button>
+    <button class="tb primary" data-act="export" data-ic="export" title="単体で開ける HTML として書き出す">HTML 書き出し</button>
+  </div>
+</header>
+
+<div id="main">
+  <aside id="pages">
+    <div id="thumbs"></div>
+    <div id="pageBtns">
+      <button data-act="pageAdd" title="テンプレートからページを追加">＋</button>
+      <button data-act="pageDup" title="ページを複製" data-ic="copy"></button>
+      <button data-act="pageDel" title="ページを削除" data-ic="trash"></button>
+    </div>
+  </aside>
+  <section id="stage">
+    <div id="pad">
+      <div id="holder">
+        <div id="page" class="mf-page"></div>
+        <div id="overlay"></div>
+      </div>
+    </div>
+    <div id="drophint">ここにドロップして追加</div>
+  </section>
+  <aside id="inspector"></aside>
+</div>
+<div id="toast"></div>
+
+<input type="file" id="fileImg" accept="image/*" multiple hidden>
+<input type="file" id="fileGlb" accept=".glb,.gltf,.vrm,model/gltf-binary" multiple hidden>
+<input type="file" id="fileProj" accept=".mfolio,application/json" hidden>
+
+<script src="js/runtime-src.js"></script>
+<script src="js/sample.js"></script>
+<script src="js/editor.js"></script>
+</body>
+</html>

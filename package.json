@@ -1,0 +1,1 @@
+{"name":"motionfolio","version":"1.0.0","private":true,"type":"module","scripts":{"build":"node tools/build.mjs","serve":"node tools/serve.mjs"},"devDependencies":{"esbuild":"^0.28.2","three":"^0.170.0"}}

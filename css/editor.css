@@ -1,0 +1,152 @@
+:root {
+  --bg: #ececee;
+  --panel: #fbfbfc;
+  --line: #dcdce0;
+  --ink: #1d1d1f;
+  --ink2: #6e6e73;
+  --accent: #0071e3;
+  --accent-soft: #e3effd;
+  --ctl: #f0f0f2;
+  --ui: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 12px/1.4 var(--ui); color: var(--ink); background: var(--bg);
+  display: flex; flex-direction: column; overflow: hidden; user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+button, select, input { font: inherit; color: inherit; }
+
+/* ツールバー */
+#toolbar {
+  flex: none; height: 56px; display: flex; align-items: center; gap: 4px; padding: 0 12px;
+  background: linear-gradient(#fdfdfe, #f4f4f6); border-bottom: 1px solid var(--line);
+}
+.tb-group { display: flex; align-items: center; gap: 2px; }
+.tb-sep { width: 1px; height: 28px; background: var(--line); margin: 0 8px; }
+.tb-spacer { flex: 1; }
+.tb {
+  border: 0; background: none; min-width: 52px; height: 46px; padding: 4px 8px 2px; border-radius: 8px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  font-size: 10.5px; color: var(--ink2); cursor: pointer; white-space: nowrap;
+}
+.tb svg { width: 20px; height: 20px; color: var(--ink); }
+.tb:hover { background: rgba(0, 0, 0, .06); }
+.tb:active { background: rgba(0, 0, 0, .1); }
+.tb:disabled { opacity: .35; pointer-events: none; }
+.tb.primary { flex-direction: row; gap: 6px; height: 32px; padding: 0 14px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; }
+.tb.primary svg { color: #fff; width: 16px; height: 16px; }
+.tb.primary:hover { background: #0064c8; }
+#zoomSel { height: 28px; border: 1px solid var(--line); border-radius: 7px; background: #fff; padding: 0 6px; }
+
+#main { flex: 1; min-height: 0; display: flex; }
+
+/* ページ一覧 */
+#pages { flex: none; width: 172px; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+#thumbs { flex: 1; overflow-y: auto; padding: 14px 0 8px; }
+.thumb { display: flex; gap: 8px; padding: 6px 14px 6px 8px; cursor: pointer; align-items: flex-end; }
+.thumb-no { width: 18px; text-align: right; color: var(--ink2); font-size: 11px; padding-bottom: 2px; }
+.thumb-frame { position: relative; overflow: hidden; border-radius: 3px; outline: 1px solid rgba(0, 0, 0, .14); background: #fff; pointer-events: none; }
+.thumb-frame .mf-page { transform-origin: 0 0; position: absolute; left: 0; top: 0; }
+.thumb.active .thumb-frame { outline: 3px solid var(--accent); }
+.thumb.active .thumb-no { color: var(--accent); font-weight: 700; }
+.thumb.dragover .thumb-frame { outline: 3px dashed var(--accent); }
+#pageBtns { flex: none; display: flex; gap: 4px; padding: 8px; border-top: 1px solid var(--line); }
+#pageBtns button { flex: 1; height: 28px; border: 0; border-radius: 7px; background: var(--ctl); cursor: pointer; display: grid; place-items: center; font-size: 15px; }
+#pageBtns button:hover { background: #e4e4e8; }
+#pageBtns svg { width: 15px; height: 15px; }
+
+/* 編集面 */
+#stage { flex: 1; min-width: 0; overflow: auto; display: flex; align-items: flex-start; position: relative; }
+/* ページの外へはみ出した要素は #pad で切り、スクロール範囲に数えない。
+   数えるとドラッグ中にスクロールバーが出入りし、そのたびに紙面がずれる */
+#pad { flex: none; min-width: 100%; min-height: 100%; display: flex; padding: 40px; overflow: clip; }
+#holder { position: relative; margin: auto; flex: none; }
+#page { position: absolute; left: 0; top: 0; transform-origin: 0 0; overflow: visible; box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 12px 40px rgba(0, 0, 0, .12); }
+#page .el { cursor: default; }
+#page .el.editing { cursor: text; user-select: text; }
+#page .el.editing .mf-tx { user-select: text; }
+#page .el.placeholder .mf-tx:empty::before { content: "テキストを入力"; opacity: .35; }
+#page .el.missing { background: repeating-linear-gradient(45deg, #f2f2f4, #f2f2f4 8px, #e6e6ea 8px, #e6e6ea 16px); }
+#overlay { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
+.selbox { position: absolute; outline: 1.5px solid var(--accent); outline-offset: 0; }
+.selbox.mode { outline: 2px solid #ff9f0a; }
+.selbox.locked { outline-style: dashed; outline-color: #8e8e93; }
+.selbox .h {
+  position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
+  background: #fff; border: 1.5px solid var(--accent); pointer-events: auto; box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+}
+.selbox .rot {
+  position: absolute; left: 50%; top: -26px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%;
+  background: var(--accent); border: 2px solid #fff; pointer-events: auto; cursor: grab; box-shadow: 0 1px 2px rgba(0, 0, 0, .3);
+}
+.selbox .rot::after { content: ""; position: absolute; left: 3px; top: 10px; width: 1.5px; height: 14px; background: var(--accent); }
+.guide { position: absolute; background: #ff2d92; }
+.guide.v { width: 1px; top: -2000px; height: 8000px; }
+.guide.hz { height: 1px; left: -2000px; width: 8000px; }
+.marquee { position: absolute; border: 1px solid var(--accent); background: rgba(0, 113, 227, .1); }
+.sizetip { position: absolute; background: rgba(29, 29, 31, .86); color: #fff; padding: 2px 7px; border-radius: 5px; font-size: 11px; white-space: nowrap; transform: translate(-50%, 10px); }
+#drophint {
+  position: absolute; inset: 12px; border: 2px dashed var(--accent); border-radius: 14px; background: rgba(0, 113, 227, .07);
+  display: none; align-items: center; justify-content: center; font-size: 15px; color: var(--accent); pointer-events: none; z-index: 30;
+}
+#stage.dropping #drophint { display: flex; }
+
+/* インスペクタ */
+#inspector { flex: none; width: 272px; background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding-bottom: 30px; }
+.insp-head { padding: 14px 16px 10px; font-size: 13px; font-weight: 700; }
+.sec { padding: 10px 16px 12px; border-top: 1px solid var(--line); }
+.sec-title { font-size: 11px; font-weight: 700; color: var(--ink2); margin-bottom: 8px; letter-spacing: .02em; }
+.row { display: flex; align-items: center; gap: 6px; min-height: 28px; margin-bottom: 4px; }
+.row > label, .row > .lbl { flex: none; width: 70px; color: var(--ink2); }
+.row > .grow { flex: 1; min-width: 0; }
+.hint { color: var(--ink2); font-size: 11px; line-height: 1.6; margin: 4px 0 2px; }
+#inspector input[type=number], #inspector input[type=text], #inspector select {
+  height: 26px; border: 1px solid transparent; border-radius: 6px; background: var(--ctl); padding: 0 7px; min-width: 0; width: 100%; outline: none;
+}
+#inspector input[type=number]:focus, #inspector input[type=text]:focus, #inspector select:focus { border-color: var(--accent); background: #fff; }
+#inspector input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+#inspector input[type=checkbox] { accent-color: var(--accent); margin: 0; }
+.pair { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+.pair > span { color: var(--ink2); font-size: 10.5px; flex: none; }
+.val { width: 34px; text-align: right; color: var(--ink2); font-variant-numeric: tabular-nums; flex: none; }
+.color { display: inline-flex; align-items: center; gap: 6px; }
+.color input[type=color] { width: 40px; height: 24px; border: 1px solid var(--line); border-radius: 6px; padding: 0; background: none; cursor: pointer; }
+.color input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
+.color input[type=color]::-webkit-color-swatch { border: 0; border-radius: 3px; }
+.chk { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.seg { display: flex; background: var(--ctl); border-radius: 7px; padding: 2px; gap: 2px; flex: 1; }
+.seg button { flex: 1; border: 0; background: none; height: 24px; border-radius: 5px; cursor: pointer; display: grid; place-items: center; padding: 0 4px; white-space: nowrap; }
+.seg button svg { width: 15px; height: 15px; }
+.seg button:hover { background: rgba(0, 0, 0, .06); }
+.seg button.on { background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .18); }
+.btns { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+.btn { border: 0; background: var(--ctl); height: 26px; border-radius: 6px; padding: 0 10px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex: 1; white-space: nowrap; }
+.btn svg { width: 15px; height: 15px; }
+.btn:hover { background: #e4e4e8; }
+.btn.danger { color: #d70015; }
+.presets { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+.presets .btn { padding: 0 4px; }
+
+/* メニュー・トースト */
+.menu {
+  position: fixed; z-index: 100; min-width: 180px; background: rgba(255, 255, 255, .96); backdrop-filter: blur(20px);
+  border: 1px solid var(--line); border-radius: 10px; padding: 5px; box-shadow: 0 10px 34px rgba(0, 0, 0, .18);
+}
+.menu button { display: flex; width: 100%; align-items: center; gap: 10px; border: 0; background: none; padding: 7px 10px; border-radius: 6px; cursor: pointer; text-align: left; }
+.menu button:hover { background: var(--accent); color: #fff; }
+.menu button small { margin-left: auto; opacity: .6; }
+.menu svg { width: 16px; height: 16px; flex: none; }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+#toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 20px); background: rgba(29, 29, 31, .9); color: #fff;
+  padding: 9px 18px; border-radius: 20px; font-size: 12.5px; opacity: 0; transition: .25s; pointer-events: none; z-index: 200;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+.btn.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.btns .btn { padding: 0 6px; min-width: 0; }
+.mf-ph { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #8e8e93; font: 12px var(--ui); text-align: center; padding: 8px;
+  background-color: #f2f2f4; background-image: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0, 0, 0, .025) 10px, rgba(0, 0, 0, .025) 20px); outline: 1.5px dashed #c7c7cc; outline-offset: -1.5px; }
+.mf-ph svg { width: 34px; height: 34px; flex: none; }
+.thumb .mf-ph span { display: none; }
