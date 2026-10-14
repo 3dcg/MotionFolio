@@ -245,9 +245,13 @@ export class Viewer {
     this.action = this.mixer.clipAction(this.clips[i]);
     this.action.play();
     this.dur = this.clips[i].duration;
-    this.t = Math.min(this.t, this.dur);
+    // 再生範囲はキーが分かった時点（_fillMarks）で最初〜最後のキーに絞る
+    this.t0 = 0; this.t1 = this.dur;
+    this.t = this._clamp(this.t);
     this._pose();
   }
+
+  _clamp(t) { return Math.max(this.t0 || 0, Math.min(this.t1 ?? this.dur, t)); }
 
   _pose() {
     if (!this.action) return;
@@ -304,7 +308,7 @@ export class Viewer {
     if (!this.ready) { this.playing = !!o.autoplay; this.t = o.time || 0; return; }
     if (o.clip !== p.clip) { this._setClip(o.clip); this._fillBar(); }
     if (o.autoplay !== p.autoplay) this.playing = !!o.autoplay;
-    if (o.time !== p.time && !this.playing) { this.t = Math.min(o.time || 0, this.dur); this._pose(); }
+    if (o.time !== p.time && !this.playing) { this.t = this._clamp(o.time || 0); this._pose(); }
     if (JSON.stringify(o.cam) !== JSON.stringify(p.cam)) this._applyCam();
     if (JSON.stringify(o.order) !== JSON.stringify(p.order)) {
       const order = this.order();
@@ -338,7 +342,7 @@ export class Viewer {
       return el;
     };
     this.playBtn = b('mfv-play', ICON.play, '再生 / 一時停止', () => {
-      if (!this.playing && this.dur && this.t >= this.dur) this.t = 0;
+      if (!this.playing && this.dur && this.t >= this.t1 - 1e-6) this.t = this.t0;
       this.playing = !this.playing;
       this._syncBar();
       if (!this.playing) this._emitTime();
@@ -349,7 +353,7 @@ export class Viewer {
     this.seek.type = 'range'; this.seek.className = 'mfv-seek'; this.seek.min = 0; this.seek.step = 1;
     this.seek.addEventListener('input', () => {
       this.playing = false;
-      this.t = Math.min(this.dur, this.seek.value / this.fps);
+      this.t = this._clamp(this.seek.value / this.fps);
       this._pose(); this._syncBar();
     });
     this.seek.addEventListener('change', () => this._emitTime());
@@ -397,30 +401,38 @@ export class Viewer {
     }
     this.clipSel.value = this.clipIdx || 0;
     this.clipSel.style.display = order.length > 1 ? '' : 'none';
-    this.frames = Math.max(1, Math.round(this.dur * this.fps));
-    this.seek.max = this.frames;
     this._fillMarks();
+    this.seek.min = Math.round(this.t0 * this.fps);
+    this.frames = Math.max(1, Math.round(this.t1 * this.fps));
+    this.seek.max = this.frames;
     this._syncBar();
   }
 
   // クリップに記録されているキーフレームの時刻を集め、シークバーに印を並べる
   _fillMarks() {
     const clip = this.clips[this.clipIdx], meta = this.meta && this.meta[this.clipIdx];
-    const set = new Set();
+    // 丸めた値で重複を除き、時刻そのものは元の精度で持つ
+    const set = new Map(), add = (t) => { const r = Math.round(t * 1000); if (!set.has(r)) set.set(r, t); };
     if (meta) {
       this.keySource = 'meta';
-      for (const t of meta.times) if (t >= -1e-6 && t <= this.dur + 1e-3) set.add(Math.round(t * 1000) / 1000);
+      for (const t of meta.times) if (t >= -1e-6 && t <= this.dur + 1e-3) add(t);
     } else if (clip) {
       this.keySource = clip.tracks.some(isBaked) ? 'estimated' : 'tracks';
-      for (const tr of clip.tracks) for (const t of isBaked(tr) ? estimateKeys(tr) : tr.times) set.add(Math.round(t * 1000) / 1000);
+      for (const tr of clip.tracks) for (const t of isBaked(tr) ? estimateKeys(tr) : tr.times) add(t);
     }
-    this.keys = [...set].sort((a, b) => a - b);
+    this.keys = [...set.values()].sort((a, b) => a - b);
+    // 再生は最初のキーから最後のキーまで。キーが 1 つ以下ならクリップ全体
+    const k0 = this.keys[0], k1 = this.keys[this.keys.length - 1];
+    if (this.keys.length > 1 && k1 - k0 > 1e-4) { this.t0 = k0; this.t1 = Math.min(k1, this.dur); }
+    else { this.t0 = 0; this.t1 = this.dur; }
+    const t = this._clamp(this.t);
+    if (t !== this.t) { this.t = t; this._pose(); }
     if (this.o.keys === false || !this.dur) { this.marks.innerHTML = ''; return; }
-    const d = this.dur;
+    const span = this.t1 - this.t0 || 1, pos = (t) => (t - this.t0) / span;
     // 多いときは菱形だと潰れて読めないので細い線に切り替える
     this.marks.innerHTML = this.keys.length <= 150
-      ? this.keys.map((t) => `<i style="left:${((t / d) * 100).toFixed(3)}%"></i>`).join('')
-      : `<svg viewBox="0 0 1000 10" preserveAspectRatio="none"><path vector-effect="non-scaling-stroke" d="${this.keys.map((t) => `M${((t / d) * 1000).toFixed(1)} 0V10`).join('')}"/></svg>`;
+      ? this.keys.map((t) => `<i style="left:${(pos(t) * 100).toFixed(3)}%"></i>`).join('')
+      : `<svg viewBox="0 0 1000 10" preserveAspectRatio="none"><path vector-effect="non-scaling-stroke" d="${this.keys.map((t) => `M${(pos(t) * 1000).toFixed(1)} 0V10`).join('')}"/></svg>`;
   }
 
   _syncBar() {
@@ -446,10 +458,10 @@ export class Viewer {
     if (toKey && this.keys.length) {
       const k = dir > 0 ? this.keys.find((x) => x > this.t + 1e-3) : [...this.keys].reverse().find((x) => x < this.t - 1e-3);
       if (k == null) return;
-      this.t = Math.min(this.dur, k);
+      this.t = this._clamp(k);
     } else {
       const f = Math.round(this.t * this.fps) + dir;
-      this.t = Math.max(0, Math.min(this.dur, f / this.fps));
+      this.t = this._clamp(f / this.fps);
     }
     this._pose(); this._syncBar(); this._emitTime();
   }
@@ -477,9 +489,11 @@ export class Viewer {
     this._size();
     if (this.playing && this.dur) {
       this.t += dt * this.o.speed;
-      if (this.t >= this.dur) {
-        if (this.o.loop) this.t %= this.dur;
-        else { this.t = this.dur; this.playing = false; }
+      if (this.t < this.t0) this.t = this.t0;
+      if (this.t >= this.t1) {
+        const span = this.t1 - this.t0;
+        if (this.o.loop && span > 0) this.t = this.t0 + ((this.t - this.t0) % span);
+        else { this.t = this.t1; this.playing = false; }
       }
       this._pose();
       this._syncBar();
