@@ -241,12 +241,25 @@ export class Viewer {
     i = Math.max(0, Math.min(this.clips.length - 1, i | 0));
     if (!force && i === this.clipIdx) return;
     if (this.action) this.action.stop();
+    if (this.actionB) { this.actionB.stop(); this.actionB = null; }
     this.clipIdx = i;
-    this.action = this.mixer.clipAction(this.clips[i]);
+    const clip = this.clips[i];
+    this.action = this.mixer.clipAction(clip);
     this.action.play();
-    this.dur = this.clips[i].duration;
-    // 再生範囲はキーが分かった時点（_fillMarks）で最初〜最後のキーに絞る
-    this.t0 = 0; this.t1 = this.dur;
+    this.dur = clip.duration;
+    // 再生範囲は書き出されたデータの最初から最後まで。Blender で 1 フレーム目から書き出せば 1 から始まる。
+    // キーの位置では決めない（シーン単位の書き出しは開始より前のキーを同梱しないので、範囲が欠ける）
+    let lo = Infinity;
+    for (const tr of clip.tracks) if (tr.times.length) lo = Math.min(lo, tr.times[0]);
+    this.t0 = Number.isFinite(lo) ? Math.min(lo, this.dur) : 0;
+    this.t1 = this.dur;
+    // 最後のコマが最初のコマの 1 つ前に当たる周期アニメーションは、ループ時にもう 1 コマかけて最初へつなぐ
+    this.seam = loopSeam(clip);
+    if (this.seam) {
+      this.seamClips = this.seamClips || [];
+      this.actionB = this.mixer.clipAction(this.seamClips[i] || (this.seamClips[i] = clip.clone()));
+      this.actionB.play();
+    }
     this.t = this._clamp(this.t);
     this._pose();
   }
@@ -255,7 +268,14 @@ export class Viewer {
 
   _pose() {
     if (!this.action) return;
-    this.action.time = this.t;
+    if (this.actionB && this.t > this.t1 + 1e-9) {
+      const a = Math.min(1, (this.t - this.t1) / this.seam);
+      this.action.time = this.t1; this.action.setEffectiveWeight(1 - a);
+      this.actionB.time = this.t0; this.actionB.setEffectiveWeight(a);
+    } else {
+      this.action.time = this.t; this.action.setEffectiveWeight(1);
+      if (this.actionB) this.actionB.setEffectiveWeight(0);
+    }
     this.mixer.update(0);
     this.dirty = true;
   }
@@ -344,8 +364,8 @@ export class Viewer {
     this.playBtn = b('mfv-play', ICON.play, '再生 / 一時停止', () => {
       if (!this.playing && this.dur && this.t >= this.t1 - 1e-6) this.t = this.t0;
       this.playing = !this.playing;
+      if (!this.playing) { this.t = this._clamp(this.t); this._pose(); this._emitTime(); }
       this._syncBar();
-      if (!this.playing) this._emitTime();
     });
     b('mfv-prev', ICON.prev, '1 フレーム戻る（Shift で前のキーフレーム）', (e) => this._step(-1, e.shiftKey));
     b('mfv-next', ICON.next, '1 フレーム進む（Shift で次のキーフレーム）', (e) => this._step(1, e.shiftKey));
@@ -421,10 +441,6 @@ export class Viewer {
       for (const tr of clip.tracks) for (const t of isBaked(tr) ? estimateKeys(tr) : tr.times) add(t);
     }
     this.keys = [...set.values()].sort((a, b) => a - b);
-    // 再生は最初のキーから最後のキーまで。キーが 1 つ以下ならクリップ全体
-    const k0 = this.keys[0], k1 = this.keys[this.keys.length - 1];
-    if (this.keys.length > 1 && k1 - k0 > 1e-4) { this.t0 = k0; this.t1 = Math.min(k1, this.dur); }
-    else { this.t0 = 0; this.t1 = this.dur; }
     const t = this._clamp(this.t);
     if (t !== this.t) { this.t = t; this._pose(); }
     if (this.o.keys === false || !this.dur) { this.marks.innerHTML = ''; return; }
@@ -437,7 +453,7 @@ export class Viewer {
 
   _syncBar() {
     if (!this.seek) return;
-    const f = Math.round(this.t * this.fps);
+    const f = Math.round(Math.min(this.t, this.t1) * this.fps);
     if (document.activeElement !== this.seek) this.seek.value = f;
     const org = (this.meta && this.meta[this.clipIdx] && this.meta[this.clipIdx].frameOrigin) || 0;
     this.timeEl.textContent = `${f + org} / ${(this.frames || 0) + org} f`;
@@ -490,9 +506,9 @@ export class Viewer {
     if (this.playing && this.dur) {
       this.t += dt * this.o.speed;
       if (this.t < this.t0) this.t = this.t0;
-      if (this.t >= this.t1) {
-        const span = this.t1 - this.t0;
-        if (this.o.loop && span > 0) this.t = this.t0 + ((this.t - this.t0) % span);
+      const period = this.t1 - this.t0 + (this.o.loop ? this.seam || 0 : 0);
+      if (this.t >= this.t0 + period) {
+        if (this.o.loop && period > 0) this.t = this.t0 + ((this.t - this.t0) % period);
         else { this.t = this.t1; this.playing = false; }
       }
       this._pose();
@@ -599,6 +615,33 @@ function estimateKeys(tr) {
     if (turn || still1 !== still2) out.push(t[i]);
   }
   return out;
+}
+
+// ループのつなぎ目の扱いを決める。毎フレーム焼き込まれたトラックで、最後と最初のコマの差を
+// ふだんの 1 コマ分の動きと比べる。
+//   差がほぼない（最初と最後が同じポーズ）  → 0。そのまま最初へ戻る
+//   1 コマ分程度（最後のコマの次が最初のコマ）→ サンプル間隔。その時間をかけて最初のコマへつなぐ
+//   大きく違う（周期アニメーションではない）  → 0。最初へ切り替える
+function loopSeam(clip) {
+  let interval = 0, open = false;
+  for (const tr of clip.tracks) {
+    if (!isBaked(tr)) continue;
+    const t = tr.times, n = t.length, k = tr.getValueSize(), v = tr.values, quat = tr.ValueTypeName === 'quaternion';
+    const at = (i, ref) => {
+      const q = Array.from(v.subarray(i * k, i * k + k));
+      if (quat && ref) { let d = 0; for (let c = 0; c < k; c++) d += q[c] * ref[c]; if (d < 0) for (let c = 0; c < k; c++) q[c] = -q[c]; }
+      return q;
+    };
+    const dist = (a, b) => Math.hypot(...a.map((x, c) => x - b[c]));
+    let maxStep = 0, sum = 0, prev = at(0);
+    for (let i = 1; i < n; i++) { const cur = at(i, prev); const d = dist(cur, prev); maxStep = Math.max(maxStep, d); sum += d; prev = cur; }
+    const avg = sum / (n - 1), first = at(0), seam = dist(at(n - 1, first), first);
+    if (seam <= Math.max(avg * 0.25, 1e-6)) continue;
+    if (seam > Math.max(maxStep * 2, 1e-6)) return 0;
+    open = true;
+    interval = (t[n - 1] - t[0]) / (n - 1);
+  }
+  return open ? interval : 0;
 }
 
 const bufCache = new Map();
