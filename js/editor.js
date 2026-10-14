@@ -112,6 +112,21 @@ box-shadow:0 1px 1.5px rgba(0,0,0,.08);vertical-align:.1em;white-space:nowrap}
 .mf-code{font-family:"JetBrains Mono","Cascadia Code",Consolas,"BIZ UDGothic",monospace;font-size:.88em;padding:.08em .38em;border-radius:.3em;background:rgba(118,118,128,.15)}
 .mf-mark{background:linear-gradient(transparent 58%,rgba(255,214,10,.7) 58%);padding:0 .06em}
 .mf-tx img.mf-mouse,.btn img.mf-mouse{display:inline;height:1.25em;width:auto;vertical-align:-.25em;margin:0 .08em}
+@counter-style mf-circled{system:fixed;symbols:"①" "②" "③" "④" "⑤" "⑥" "⑦" "⑧" "⑨" "⑩" "⑪" "⑫" "⑬" "⑭" "⑮" "⑯" "⑰" "⑱" "⑲" "⑳";suffix:""}
+.mf-tx ul,.mf-tx ol{margin:0;padding:0 0 0 1.6em;list-style:none;counter-reset:mf}
+.mf-tx li{counter-increment:mf}
+.mf-tx li+li{margin-top:.2em}
+.mf-tx li::before{display:inline-block;width:1.6em;margin-left:-1.6em;text-align:center;font-weight:700;text-indent:0}
+.mf-l-dot li::before{content:"・";font-weight:400}
+.mf-l-disc li::before{content:"•"}
+.mf-l-square li::before{content:"▪"}
+.mf-l-check li::before{content:"✓";color:#0071e3}
+.mf-l-arrow li::before{content:"→";color:#0071e3}
+.mf-l-num li::before{content:counter(mf) ".";text-align:left;font-variant-numeric:tabular-nums}
+.mf-l-circled li::before{content:counter(mf,mf-circled);font-weight:400}
+.mf-l-paren li::before{content:"(" counter(mf) ")";text-align:left;font-weight:400}
+.mf-tx ul.mf-l-step,.mf-tx ol.mf-l-step{padding-left:2em}
+.mf-l-step li::before{content:counter(mf);font-size:.72em;width:1.6em;height:1.6em;line-height:1.6em;margin-left:-2.78em;margin-right:1.18em;border-radius:50%;background:#0071e3;color:#fff;vertical-align:.12em}
 `;
 
 /* ---------- 状態 ---------- */
@@ -523,6 +538,66 @@ function wrapInline(cls) {
   el.html = tx.innerHTML;
   touch();
 }
+// 箇条書き。段落単位で ul / ol にし、記号の種類はクラスで切り替える
+const LISTS = [
+  { id: 'none', label: 'なし', title: '箇条書きを解除' },
+  { id: 'dot', label: '・', title: '中黒' },
+  { id: 'disc', label: '•', title: '黒丸' },
+  { id: 'square', label: '▪', title: '四角' },
+  { id: 'check', label: '<span style="color:#0071e3">✓</span>', title: 'チェック' },
+  { id: 'arrow', label: '<span style="color:#0071e3">→</span>', title: '矢印' },
+  { id: 'num', label: '1.', title: '番号', ol: true },
+  { id: 'circled', label: '①', title: '丸数字', ol: true },
+  { id: 'paren', label: '(1)', title: 'かっこ数字', ol: true },
+  { id: 'step', label: '<span class="list-step">1</span>', title: '手順バッジ', ol: true },
+];
+function setList(id) {
+  const cur = editingTx();
+  if (!cur) return;
+  const { el, tx } = cur, sel = getSelection();
+  if (!sel.rangeCount) return;
+  // カーソルのある箇条書きと、選択範囲にかかる箇条書きを集める（全文選択だとカーソル位置が箇条書きの外になる）
+  const listsInSel = () => {
+    const a = sel.anchorNode, own = a && (a.nodeType === 1 ? a : a.parentNode).closest('ul,ol');
+    const all = sel.rangeCount ? [...tx.querySelectorAll('ul,ol')].filter((l) => sel.getRangeAt(0).intersectsNode(l)) : [];
+    if (own && tx.contains(own) && !all.includes(own)) all.unshift(own);
+    return all;
+  };
+  const top = (ls) => ls.filter((l) => !l.parentNode.closest('ul,ol') || !tx.contains(l.parentNode.closest('ul,ol')));
+  const spec = LISTS.find((l) => l.id === id);
+  let lists = listsInSel();
+  if (id === 'none') {
+    // 入れ子の内側から順に、項目を普通の段落へ戻す。戻した段落は選んだままにして、続けて別の記号を掛けられるようにする
+    const made = [], whole = sel.rangeCount && sel.getRangeAt(0).toString().trim() === tx.textContent.trim();
+    for (const l of lists.reverse()) {
+      if (!l.isConnected) continue;
+      for (const c of [...l.childNodes]) {
+        if (c.nodeName === 'LI') { const d = document.createElement('div'); while (c.firstChild) d.append(c.firstChild); l.before(d); c.remove(); made.push(d); }
+        else l.before(c);
+      }
+      l.remove();
+    }
+    const live = made.filter((d) => d.isConnected);
+    if (whole || live.length) {
+      const rr = document.createRange();
+      if (whole) rr.selectNodeContents(tx);
+      else {
+        live.sort((p, q) => (p.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+        rr.setStartBefore(live[0]); rr.setEndAfter(live[live.length - 1]);
+      }
+      sel.removeAllRanges(); sel.addRange(rr);
+    }
+  } else {
+    const tag = spec.ol ? 'OL' : 'UL';
+    // 同じ種類の箇条書きなら記号だけ替える。execCommand は同じ種類に掛けると解除してしまう
+    if (!lists.length || lists.some((l) => l.tagName !== tag)) document.execCommand(spec.ol ? 'insertOrderedList' : 'insertUnorderedList');
+    lists = listsInSel();
+    top(lists).forEach((l) => { l.className = 'mf-l-' + id; });
+  }
+  el.html = tx.innerHTML;
+  touch();
+}
+
 function insertInline(html) {
   const cur = editingTx();
   if (!cur) return;
@@ -539,6 +614,12 @@ function textShortcut(e) {
   const el = first();
   if (!state.editing && !(state.sel.size === 1 && el && el.type === 'text')) return false;
   const k = e.key.toLowerCase();
+  // Shift+数字は配列によって e.key が変わるので、物理キーで見る
+  if (e.shiftKey && (e.code === 'Digit8' || e.code === 'Digit7')) {
+    e.preventDefault();
+    setList(e.code === 'Digit8' ? 'disc' : 'num');
+    return true;
+  }
   const cmd = [...TEXT_CMDS, ...TECH_CMDS].find((c) => c.key === k && !!c.shift === e.shiftKey);
   if (!cmd) return false;
   e.preventDefault();
@@ -734,6 +815,17 @@ pageEl.addEventListener('input', () => {
   touch();
 });
 pageEl.addEventListener('click', (e) => { if (e.target.closest('a')) e.preventDefault(); });
+// 箇条書きの中では Tab で 1 段下げ、Shift+Tab で戻す
+pageEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab' || !state.editing) return;
+  const n = getSelection().anchorNode, li = n && (n.nodeType === 1 ? n : n.parentNode).closest('li');
+  if (!li) return;
+  e.preventDefault();
+  document.execCommand(e.shiftKey ? 'outdent' : 'indent');
+  const el = findEl(state.editing);
+  el.html = nodes.get(el.id).firstElementChild.innerHTML;
+  touch();
+});
 
 stage.addEventListener('wheel', (e) => {
   if (!e.ctrlKey || state.interact) return;
@@ -1068,6 +1160,9 @@ function textPanel(el) {
       row('技術書', h('div', { class: 'btns tech' },
         TECH_CMDS.map((c) => C.btn(c.html, c.run, { title: `${c.title}（${keyLabel(c.key, c.shift)}）` })))),
       row('マウス', h('div', { class: 'btns tech' }, MOUSE_CMDS.map((c) => C.btn(c.html, c.run, { title: c.title + 'の図を挿入' })))),
+      row('箇条書き', h('div', { class: 'list-grid' }, LISTS.map((l) => C.btn(l.label, () => setList(l.id), {
+        title: l.title + (l.id === 'disc' ? `（${keyLabel('8', true)}）` : l.id === 'num' ? `（${keyLabel('7', true)}）` : ''),
+      })))),
       row('行揃え', C.seg('align', [['left', IC.tl, '左揃え'], ['center', IC.tc, '中央揃え'], ['right', IC.tr, '右揃え'], ['justify', IC.tj, '両端揃え']])),
       row('行間', ...C.range('lh', 1, 3, 0.05, (v) => v.toFixed(2))),
       row('字間', ...C.range('ls', -0.05, 0.4, 0.01, (v) => v.toFixed(2)))),
