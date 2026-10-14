@@ -161,7 +161,7 @@ button, select, input { font: inherit; color: inherit; }
 .clip-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .clip-row .btn { flex: none; width: 24px; height: 22px; padding: 0; background: transparent; }
 .clip-row .btn:hover { background: rgba(0, 0, 0, .07); }
-.list-grid { flex: 1; display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.list-grid { flex: 1; display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
 .list-grid .btn { padding: 0; font-size: 13px; }
 .list-grid .btn:first-child { font-size: 11px; }
 .list-step { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: #0071e3; color: #fff; font-size: 10px; font-weight: 700; }

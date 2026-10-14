@@ -96,6 +96,23 @@ const mouseSvg = (b) => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16
 const MOUSE_ICON = Object.fromEntries(['l', 'm', 'r'].map((b) => [b, 'data:image/svg+xml,' + encodeURIComponent(mouseSvg(b))]));
 const COMMON = new Set(['x', 'y', 'w', 'h', 'rot', 'opacity', 'locked', 'radius', 'shadow', 'borderW', 'borderC']);
 
+// 箇条書きの記号。段ごとにクラスを持てるよう子セレクタで当て、クラスのない入れ子の段は外側の段の記号を引き継ぐ
+const LIST_MARK = {
+  dot: 'content:"・";font-weight:400',
+  disc: 'content:"•"',
+  dash: 'content:"–";font-weight:400',
+  square: 'content:"▪"',
+  check: 'content:"✓";color:#0071e3',
+  arrow: 'content:"→";color:#0071e3',
+  num: 'content:counter(mf) ".";text-align:left;font-variant-numeric:tabular-nums',
+  alpha: 'content:counter(mf,lower-alpha) ".";text-align:left;font-weight:400',
+  circled: 'content:counter(mf,mf-circled);font-weight:400',
+  paren: 'content:"(" counter(mf) ")";text-align:left;font-weight:400',
+  step: 'content:counter(mf);font-size:.72em;width:1.6em;height:1.6em;line-height:1.6em;margin-left:-2.78em;margin-right:1.18em;border-radius:50%;background:#0071e3;color:#fff;vertical-align:.12em',
+};
+const LIST_CSS = Object.entries(LIST_MARK).map(([id, css]) =>
+  `.mf-l-${id}>li::before,.mf-l-${id} :is(ul,ol):not([class])>li::before{${css}}`).join('\n') +
+  '\n.mf-tx .mf-l-step,.mf-tx .mf-l-step :is(ul,ol):not([class]){padding-left:2em}';
 // エディターと書き出し HTML で共通のスタイル
 const BASE_CSS = `
 .mf-page{position:relative;overflow:hidden;background:#fff}
@@ -117,16 +134,7 @@ box-shadow:0 1px 1.5px rgba(0,0,0,.08);vertical-align:.1em;white-space:nowrap}
 .mf-tx li{counter-increment:mf}
 .mf-tx li+li{margin-top:.2em}
 .mf-tx li::before{display:inline-block;width:1.6em;margin-left:-1.6em;text-align:center;font-weight:700;text-indent:0}
-.mf-l-dot li::before{content:"・";font-weight:400}
-.mf-l-disc li::before{content:"•"}
-.mf-l-square li::before{content:"▪"}
-.mf-l-check li::before{content:"✓";color:#0071e3}
-.mf-l-arrow li::before{content:"→";color:#0071e3}
-.mf-l-num li::before{content:counter(mf) ".";text-align:left;font-variant-numeric:tabular-nums}
-.mf-l-circled li::before{content:counter(mf,mf-circled);font-weight:400}
-.mf-l-paren li::before{content:"(" counter(mf) ")";text-align:left;font-weight:400}
-.mf-tx ul.mf-l-step,.mf-tx ol.mf-l-step{padding-left:2em}
-.mf-l-step li::before{content:counter(mf);font-size:.72em;width:1.6em;height:1.6em;line-height:1.6em;margin-left:-2.78em;margin-right:1.18em;border-radius:50%;background:#0071e3;color:#fff;vertical-align:.12em}
+${LIST_CSS}
 `;
 
 /* ---------- 状態 ---------- */
@@ -543,10 +551,12 @@ const LISTS = [
   { id: 'none', label: 'なし', title: '箇条書きを解除' },
   { id: 'dot', label: '・', title: '中黒' },
   { id: 'disc', label: '•', title: '黒丸' },
+  { id: 'dash', label: '–', title: 'ダッシュ' },
   { id: 'square', label: '▪', title: '四角' },
   { id: 'check', label: '<span style="color:#0071e3">✓</span>', title: 'チェック' },
   { id: 'arrow', label: '<span style="color:#0071e3">→</span>', title: '矢印' },
   { id: 'num', label: '1.', title: '番号', ol: true },
+  { id: 'alpha', label: 'a.', title: 'アルファベット', ol: true },
   { id: 'circled', label: '①', title: '丸数字', ol: true },
   { id: 'paren', label: '(1)', title: 'かっこ数字', ol: true },
   { id: 'step', label: '<span class="list-step">1</span>', title: '手順バッジ', ol: true },
@@ -556,17 +566,28 @@ function setList(id) {
   if (!cur) return;
   const { el, tx } = cur, sel = getSelection();
   if (!sel.rangeCount) return;
-  // カーソルのある箇条書きと、選択範囲にかかる箇条書きを集める（全文選択だとカーソル位置が箇条書きの外になる）
-  const listsInSel = () => {
-    const a = sel.anchorNode, own = a && (a.nodeType === 1 ? a : a.parentNode).closest('ul,ol');
-    const all = sel.rangeCount ? [...tx.querySelectorAll('ul,ol')].filter((l) => sel.getRangeAt(0).intersectsNode(l)) : [];
-    if (own && tx.contains(own) && !all.includes(own)) all.unshift(own);
-    return all;
+  const ownOf = (n) => {
+    const e = n && (n.nodeType === 1 ? n : n.parentNode), l = e && e.closest('ul,ol');
+    return l && tx.contains(l) ? l : null;
   };
-  const top = (ls) => ls.filter((l) => !l.parentNode.closest('ul,ol') || !tx.contains(l.parentNode.closest('ul,ol')));
+  const depth = (l) => { let d = 0; for (let x = ownOf(l.parentNode); x; x = ownOf(x.parentNode)) d++; return d; };
+  const inRange = () => [...tx.querySelectorAll('ul,ol')].filter((l) => sel.getRangeAt(0).intersectsNode(l));
+  // カーソルが箇条書きの中にあれば、その段だけが対象。範囲を選んでいれば、範囲にかかるいちばん外側の段
+  const sameList = () => {
+    const a = ownOf(sel.anchorNode);
+    return a && (sel.getRangeAt(0).collapsed || a === ownOf(sel.focusNode)) ? a : null;
+  };
+  const levelLists = () => {
+    const own = sameList();
+    if (own) return [own];
+    const all = inRange();
+    if (!all.length) return [];
+    const m = Math.min(...all.map(depth));
+    return all.filter((l) => depth(l) === m);
+  };
   const spec = LISTS.find((l) => l.id === id);
-  let lists = listsInSel();
   if (id === 'none') {
+    const own = sameList(), lists = own ? [own] : inRange();
     // 入れ子の内側から順に、項目を普通の段落へ戻す。戻した段落は選んだままにして、続けて別の記号を掛けられるようにする
     const made = [], whole = sel.rangeCount && sel.getRangeAt(0).toString().trim() === tx.textContent.trim();
     for (const l of lists.reverse()) {
@@ -589,10 +610,25 @@ function setList(id) {
     }
   } else {
     const tag = spec.ol ? 'OL' : 'UL';
-    // 同じ種類の箇条書きなら記号だけ替える。execCommand は同じ種類に掛けると解除してしまう
-    if (!lists.length || lists.some((l) => l.tagName !== tag)) document.execCommand(spec.ol ? 'insertOrderedList' : 'insertUnorderedList');
-    lists = listsInSel();
-    top(lists).forEach((l) => { l.className = 'mf-l-' + id; });
+    let targets = levelLists();
+    if (!targets.length) {
+      document.execCommand(spec.ol ? 'insertOrderedList' : 'insertUnorderedList');
+      targets = levelLists();
+    }
+    // 番号と記号の切り替えは要素を差し替えて行う。execCommand だと入れ子の段まで巻き込むため
+    const keep = [sel.anchorNode, sel.anchorOffset, sel.focusNode, sel.focusOffset];
+    const whole = sel.getRangeAt(0).toString().trim() === tx.textContent.trim();
+    for (let l of targets) {
+      if (l.tagName !== tag) {
+        const n = document.createElement(tag);
+        while (l.firstChild) n.append(l.firstChild);
+        l.replaceWith(n);
+        l = n;
+      }
+      l.className = 'mf-l-' + id;
+    }
+    if (whole) { const rr = document.createRange(); rr.selectNodeContents(tx); sel.removeAllRanges(); sel.addRange(rr); }
+    else if (keep[0] && keep[0].isConnected && keep[2] && keep[2].isConnected) sel.setBaseAndExtent(...keep);
   }
   el.html = tx.innerHTML;
   touch();
