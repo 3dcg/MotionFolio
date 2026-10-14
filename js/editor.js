@@ -1879,6 +1879,10 @@ document.addEventListener('keydown', (e) => {
 /* ---------- 起動 ---------- */
 
 async function init() {
+  // iOS のファイル選択は拡張子ではなく登録済みのファイルの種類で絞り込むため、
+  // 独自拡張子の .mfolio や .glb が選べなくなる。iOS では絞り込みを外し、開いた後に中身で判定する
+  const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (iOS) for (const id of ['#fileProj', '#fileGlb']) $(id).removeAttribute('accept');
   document.head.append(h('style', {}, BASE_CSS));
   document.head.append(h('link', { rel: 'stylesheet', href: fontsHref(Object.keys(FONTS).filter((k) => FONTS[k].g)) }));
   await idb.open();
