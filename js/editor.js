@@ -376,7 +376,8 @@ function renderOverlay() {
 function applyZoom() {
   const d = state.doc;
   if (state.zoomMode === 'fit') {
-    state.zoom = clamp(Math.min((stage.offsetWidth - 80) / d.w, (stage.offsetHeight - 80) / d.h), 0.1, 3);
+    const pad = parseFloat(getComputedStyle($('#pad')).paddingLeft) * 2 || 80;
+    state.zoom = clamp(Math.min((stage.offsetWidth - pad) / d.w, (stage.offsetHeight - pad) / d.h), 0.1, 3);
   } else state.zoom = state.zoomMode;
   holder.style.width = d.w * state.zoom + 'px';
   holder.style.height = d.h * state.zoom + 'px';
@@ -732,18 +733,47 @@ function snap1(vals, lines) {
   return best;
 }
 
+let endDrag = null;
 function beginDrag(onMove, onUp) {
   const mv = (e) => onMove(e, pagePt(e));
   const up = (e) => {
+    if (endDrag !== up) return;
+    endDrag = null;
     window.removeEventListener('pointermove', mv);
     window.removeEventListener('pointerup', up);
     window.removeEventListener('pointercancel', up);
     onUp(e);
   };
+  if (endDrag) endDrag(new PointerEvent('pointerup'));
+  endDrag = up;
   window.addEventListener('pointermove', mv);
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', up);
 }
+
+// 2 本指のピンチで表示倍率を変える。始まった時点で 1 本目の指のドラッグは打ち切る
+const touches = new Map();
+let pinch = null;
+const fingerDist = () => { const [a, b] = [...touches.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
+stage.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'touch') return;
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (touches.size === 2 && !state.editing && !state.interact) {
+    if (endDrag) endDrag(e);
+    pinch = { d: fingerDist(), z: state.zoom };
+  }
+}, true);
+window.addEventListener('pointermove', (e) => {
+  if (!touches.has(e.pointerId)) return;
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && touches.size === 2) {
+    state.zoomMode = +clamp(pinch.z * fingerDist() / pinch.d, 0.1, 4).toFixed(3);
+    applyZoom();
+  }
+});
+const fingerUp = (e) => { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; };
+window.addEventListener('pointerup', fingerUp);
+window.addEventListener('pointercancel', fingerUp);
 
 function startMove(p0) {
   const els = selEls().filter((el) => !el.locked);
@@ -831,8 +861,10 @@ function startMarquee(p0, add) {
   }, () => { marquee = null; renderOverlay(); insp(); });
 }
 
+let lastPointer = 'mouse';
 stage.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0) return;
+  lastPointer = e.pointerType;
+  if (e.button !== 0 || pinch) return;
   const hd = e.target.closest('.h,.rot');
   if (hd) {
     e.preventDefault();
@@ -855,7 +887,8 @@ stage.addEventListener('pointerdown', (e) => {
   const p = pagePt(e);
   if (!id) {
     if (!e.shiftKey) setSel([]);
-    startMarquee(p, e.shiftKey);
+    // 指では範囲選択をせず、拡大中の紙面をスクロールできるようにする
+    if (e.pointerType !== 'touch') startMarquee(p, e.shiftKey);
     return;
   }
   if (e.shiftKey) {
@@ -867,15 +900,27 @@ stage.addEventListener('pointerdown', (e) => {
   startMove(p);
 });
 
-stage.addEventListener('dblclick', (e) => {
-  const n = e.target.closest('#page .el');
-  if (!n || e.target.closest('.mfv-bar')) return;
-  const el = findEl(n.dataset.id);
+function openEl(el) {
   if (!el || state.editing === el.id || state.interact === el.id) return;
   if (el.type === 'text') enterEdit(el.id);
   else if (el.type === 'model' && !el.asset) pickFiles('#fileGlb', (files) => fillModel(el, files[0]));
   else if (el.type === 'model') enterInteract(el.id);
   else if (el.type === 'image') pickFiles('#fileImg', (files) => replaceImage(el, files[0]));
+}
+const elAt = (e) => { const n = e.target.closest('#page .el'); return n && !e.target.closest('.mfv-bar') ? findEl(n.dataset.id) : null; };
+stage.addEventListener('dblclick', (e) => { if (lastPointer !== 'touch') openEl(elAt(e)); });
+// 指ではダブルタップで同じ操作にする。iOS は dblclick を確実には出さないので、タップを自前で数える。
+// click の中で呼ぶので、テキスト編集に入るとそのままキーボードが出る
+let lastTap = { id: null, t: 0 };
+stage.addEventListener('click', (e) => {
+  if (lastPointer !== 'touch') return;
+  const el = elAt(e), now = Date.now();
+  const key = el ? el.id : 'stage';
+  if (lastTap.id === key && now - lastTap.t < 400) {
+    lastTap = { id: null, t: 0 };
+    // 何もないところのダブルタップは、ピンチで変えた倍率をフィットに戻す
+    if (el) openEl(el); else { state.zoomMode = 'fit'; applyZoom(); }
+  } else lastTap = { id: key, t: now };
 });
 
 pageEl.addEventListener('input', () => {
@@ -1776,6 +1821,11 @@ const ACT = {
 };
 for (const b of $$('[data-ic]')) b.insertAdjacentHTML('afterbegin', IC[b.dataset.ic]);
 for (const b of $$('[data-act]')) b.addEventListener('click', () => ACT[b.dataset.act](b));
+// スマホでは右パネルを下から出すシートにしている。ボタンで開け閉めする
+$('#inspToggle').addEventListener('click', (e) => {
+  const open = document.body.classList.toggle('insp-open');
+  e.currentTarget.textContent = open ? '閉じる' : '調整';
+});
 $('#zoomSel').addEventListener('change', (e) => {
   state.zoomMode = e.target.value === 'fit' ? 'fit' : +e.target.value;
   applyZoom();

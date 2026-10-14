@@ -165,3 +165,53 @@ button, select, input { font: inherit; color: inherit; }
 .list-grid .btn { padding: 0; font-size: 13px; }
 .list-grid .btn:first-child { font-size: 11px; }
 .list-step { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: #0071e3; color: #fff; font-size: 10px; font-weight: 700; }
+
+/* 指で操作する端末：つまみを大きくし、要素のドラッグでページがスクロールしないようにする */
+#stage { touch-action: pan-x pan-y; }
+#page .el { touch-action: none; }
+#page .el.editing { touch-action: auto; }
+#inspToggle { display: none; }
+@media (pointer: coarse) {
+  .selbox .h { width: 20px; height: 20px; margin: -10px 0 0 -10px; touch-action: none; }
+  .selbox .rot { width: 22px; height: 22px; top: -38px; margin-left: -11px; touch-action: none; }
+  .selbox .rot::after { left: 8px; top: 20px; height: 18px; }
+}
+
+/* スマホ：ツールバーはアイコンだけ、ページ一覧は下に横並び、右パネルは下からのシート */
+@media (max-width: 760px) {
+  body { height: 100dvh; }
+  #toolbar { height: 50px; padding: 0 4px; gap: 0; overflow-x: auto; scrollbar-width: none; }
+  #toolbar::-webkit-scrollbar { display: none; }
+  #toolbar .tb { font-size: 0; min-width: 40px; height: 40px; padding: 0 6px; gap: 0; flex: none; }
+  #toolbar .tb svg { width: 21px; height: 21px; }
+  #toolbar .tb.primary { height: 34px; padding: 0 10px; }
+  .tb-spacer { flex: 0 0 2px; }
+  .tb-sep { margin: 0 3px; height: 24px; flex: none; }
+  #zoomSel { display: none; }
+  #main { flex-direction: column; }
+  #stage { order: 1; flex: 1; min-height: 0; }
+  #pad { padding: 14px; }
+  #pages { order: 2; width: auto; flex-direction: row; border-right: 0; border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  #thumbs { flex: 1; display: flex; overflow-x: auto; overflow-y: hidden; padding: 6px 4px; }
+  .thumb { flex-direction: column-reverse; align-items: center; gap: 2px; padding: 0 4px; flex: none; }
+  .thumb-frame { zoom: .42; }
+  .thumb-no { width: auto; padding: 0; font-size: 10px; }
+  #pageBtns { flex-direction: column; justify-content: center; border-top: 0; border-left: 1px solid var(--line); padding: 4px; gap: 3px; }
+  #pageBtns button { flex: none; width: 34px; height: 24px; }
+  #inspector {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; width: auto; height: min(62dvh, 560px);
+    border-left: 0; border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; box-shadow: 0 -10px 40px rgba(0, 0, 0, .18);
+    transform: translateY(105%); transition: transform .25s ease; padding-bottom: calc(30px + env(safe-area-inset-bottom));
+  }
+  body.insp-open #inspector { transform: none; }
+  #inspToggle {
+    display: block; position: fixed; right: 12px; bottom: calc(96px + env(safe-area-inset-bottom)); z-index: 70;
+    border: 0; border-radius: 20px; padding: 9px 16px; background: var(--accent); color: #fff; font-weight: 600;
+    box-shadow: 0 4px 14px rgba(0, 113, 227, .4); cursor: pointer; transition: bottom .25s ease;
+  }
+  body.insp-open #inspToggle { bottom: calc(min(62dvh, 560px) + 10px); background: #1d1d1f; box-shadow: 0 4px 14px rgba(0, 0, 0, .3); }
+  .row > label, .row > .lbl { width: 64px; }
+  #inspector input[type=number], #inspector input[type=text], #inspector select { height: 32px; font-size: 16px; }
+  .btn { height: 32px; }
+  .menu button { padding: 11px 12px; }
+}
