@@ -86,6 +86,14 @@ const SIZES = [
 ];
 const TYPE_NAME = { text: 'テキスト', image: '画像', shape: '図形', model: '3D アニメーション' };
 const SHADOW = '0 12px 32px rgba(0,0,0,.16),0 2px 6px rgba(0,0,0,.08)';
+// 文中に差し込むマウスの図。押すボタンだけ青く塗る
+const mouseSvg = (b) => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 22">' +
+  '<rect x="1" y="1" width="14" height="20" rx="7" fill="#fff" stroke="#3a3a3c" stroke-width="1.4"/>' +
+  (b === 'l' ? '<path d="M8 1.7A6.3 6.3 0 0 0 1.7 8v1H8z" fill="#0071e3"/>' : '') +
+  (b === 'r' ? '<path d="M8 1.7A6.3 6.3 0 0 1 14.3 8v1H8z" fill="#0071e3"/>' : '') +
+  '<path d="M1.7 9h12.6M8 1.7V9" stroke="#3a3a3c" stroke-width="1.2" fill="none"/>' +
+  `<rect x="6.6" y="3.4" width="2.8" height="4.4" rx="1.4" fill="${b === 'm' ? '#0071e3' : '#fff'}" stroke="#3a3a3c" stroke-width="1"/></svg>`;
+const MOUSE_ICON = Object.fromEntries(['l', 'm', 'r'].map((b) => [b, 'data:image/svg+xml,' + encodeURIComponent(mouseSvg(b))]));
 const COMMON = new Set(['x', 'y', 'w', 'h', 'rot', 'opacity', 'locked', 'radius', 'shadow', 'borderW', 'borderC']);
 
 // エディターと書き出し HTML で共通のスタイル
@@ -97,6 +105,13 @@ const BASE_CSS = `
 .mf-box{width:100%;height:100%;box-sizing:border-box;overflow:hidden}
 .mf-box img{width:100%;height:100%;display:block}
 .mf-box svg{display:block;overflow:visible}
+.mf-kbd{display:inline-block;min-width:1.55em;padding:0 .42em;margin:0 .1em;box-sizing:border-box;text-align:center;text-indent:0;
+font-family:system-ui,-apple-system,"Segoe UI","Hiragino Sans","Yu Gothic UI",sans-serif;font-size:.8em;font-weight:600;font-style:normal;line-height:1.6;letter-spacing:0;
+color:#1d1d1f;background:linear-gradient(#fff,#f0f0f3);border:1px solid #c4c4ca;border-bottom-width:2.5px;border-radius:.38em;
+box-shadow:0 1px 1.5px rgba(0,0,0,.08);vertical-align:.1em;white-space:nowrap}
+.mf-code{font-family:"JetBrains Mono","Cascadia Code",Consolas,"BIZ UDGothic",monospace;font-size:.88em;padding:.08em .38em;border-radius:.3em;background:rgba(118,118,128,.15)}
+.mf-mark{background:linear-gradient(transparent 58%,rgba(255,214,10,.7) 58%);padding:0 .06em}
+.mf-tx img.mf-mouse,.btn img.mf-mouse{display:inline;height:1.25em;width:auto;vertical-align:-.25em;margin:0 .08em}
 `;
 
 /* ---------- 状態 ---------- */
@@ -143,7 +158,7 @@ function modelStyle(el) {
 }
 function modelOpts(el) {
   const { asset, clip, autoplay, loop, speed, controls, grid, skeleton, wire, autoRotate, exposure, fps, time, cam, bg } = el;
-  return { asset, clip, autoplay, loop, speed, controls, grid, skeleton, wire, autoRotate, exposure, fps, time, cam, bg, keys: el.keys !== false };
+  return { asset, clip, autoplay, loop, speed, controls, grid, skeleton, wire, autoRotate, exposure, fps, time, cam, bg, keys: el.keys !== false, order: el.order || null };
 }
 function shapeHTML(el) {
   const sh = el.shadow ? `box-shadow:${SHADOW};` : '';
@@ -384,6 +399,9 @@ function exitModes() {
     if (n && el) {
       const tx = n.firstElementChild;
       tx.contentEditable = 'false';
+      // 装飾の入力用に置いた目印の空白を消し、中身のない装飾は取り除く
+      tx.innerHTML = tx.innerHTML.replace(/​/g, '');
+      $$('.mf-kbd,.mf-code,.mf-mark', tx).forEach((s) => { if (!s.textContent) s.remove(); });
       let html = tx.innerHTML;
       if (html === '<br>') html = '';
       el.html = html;
@@ -432,6 +450,100 @@ function inlineCmd(cmd, val) {
   $$('a', tx).forEach((a) => { a.target = '_blank'; a.rel = 'noopener'; });
   el.html = tx.innerHTML;
   touch();
+}
+
+// 文字装飾。インスペクタのボタンとキーボードショートカットの両方がこの表を使う
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+const keyLabel = (key, shift) => (IS_MAC ? '⌘' + (shift ? '⇧' : '') : 'Ctrl+' + (shift ? 'Shift+' : '')) + key.toUpperCase();
+const TEXT_CMDS = [
+  { html: '<b>B</b>', title: '太字', key: 'b', run: () => inlineCmd('bold') },
+  { html: '<i>I</i>', title: '斜体', key: 'i', run: () => inlineCmd('italic') },
+  { html: '<u>U</u>', title: '下線', key: 'u', run: () => inlineCmd('underline') },
+  { html: '色', title: '強調色', key: 'h', shift: true, run: () => inlineCmd('foreColor', '#ff3b30') },
+  { html: 'リンク', title: 'リンク', key: 'k', run: () => { const u = prompt('リンク先の URL'); if (u) inlineCmd('createLink', u); } },
+  { html: '解除', title: '装飾を外す', key: '\\', run: () => { inlineCmd('removeFormat'); inlineCmd('unlink'); } },
+];
+// 技術書向けの装飾。キーキャップ・インラインコード・マーカーは選択範囲を span で囲み、
+// もう一度掛けると外れる。マウスの図は小さな画像として文中に差し込む
+const TECH_CMDS = [
+  { html: '<span class="mf-kbd">キー</span>', title: 'キーキャップ（「Ctrl+Z」のように + でつなぐと 1 キーずつ囲む）', key: 'k', shift: true, run: () => wrapInline('mf-kbd') },
+  { html: '<span class="mf-code">コード</span>', title: 'インラインコード', key: 'e', run: () => wrapInline('mf-code') },
+  { html: '<span class="mf-mark">マーカー</span>', title: 'マーカー', key: 'y', shift: true, run: () => wrapInline('mf-mark') },
+];
+const MOUSE_CMDS = [['l', '左クリック'], ['m', 'ホイール（中ボタン）'], ['r', '右クリック']].map(([b, title]) => ({
+  html: `<img class="mf-mouse" src="${MOUSE_ICON[b]}" alt="">`, title, run: () => insertInline(`<img class="mf-mouse" src="${MOUSE_ICON[b]}" alt="${title}">`),
+}));
+
+function editingTx() {
+  const el = first();
+  if (!el || el.type !== 'text') return null;
+  if (state.editing !== el.id) enterEdit(el.id, true);
+  return { el, tx: nodes.get(el.id).firstElementChild };
+}
+function wrapInline(cls) {
+  const cur = editingTx();
+  if (!cur) return;
+  const { el, tx } = cur, sel = getSelection();
+  if (!sel.rangeCount || !tx.contains(sel.getRangeAt(0).commonAncestorContainer)) return;
+  const r = sel.getRangeAt(0);
+  const owner = (n) => { for (let x = n; x && x !== tx; x = x.parentNode) if (x.nodeType === 1 && x.classList.contains(cls)) return x; return null; };
+  const unwrap = (x) => { const p = x.parentNode; while (x.firstChild) p.insertBefore(x.firstChild, x); x.remove(); p.normalize(); };
+  const span = (text) => { const s = document.createElement('span'); s.className = cls; if (text != null) s.textContent = text; return s; };
+  const caret = (node, after) => {
+    const rr = document.createRange();
+    if (after) {
+      // 装飾の直後に目印の空白を置いてからカーソルを移す。そうしないと続けて打った文字が装飾の中に入る
+      const z = document.createTextNode('​');
+      node.after(z);
+      rr.setStart(z, 1);
+    } else rr.setStart(node, node.length);
+    rr.collapse(true); sel.removeAllRanges(); sel.addRange(rr);
+  };
+  const hit = owner(r.startContainer) || owner(r.endContainer);
+  // 範囲を選んでいれば装飾を外し、カーソルだけなら装飾の外へ抜ける
+  if (hit && r.collapsed) caret(hit, true);
+  else if (hit) unwrap(hit);
+  else if (r.collapsed) {
+    // 何も選んでいなければ空の装飾を置き、続けて打つ文字をその中に入れる
+    const s = span('​');
+    r.insertNode(s);
+    caret(s.firstChild);
+  } else {
+    const text = r.toString().trim(), frag = r.extractContents();
+    frag.querySelectorAll('.' + cls).forEach(unwrap);
+    let out = span(), last;
+    if (cls === 'mf-kbd' && !frag.querySelector('*') && /^[^\s+]+(\s*\+\s*[^\s+]+)+$/.test(text)) {
+      out = document.createDocumentFragment();
+      text.split(/\s*\+\s*/).forEach((key, i) => { if (i) out.append('+'); out.append(span(key)); });
+    } else out.append(frag);
+    last = out.nodeType === 11 ? out.lastChild : out;
+    r.insertNode(out);
+    caret(last, true);
+  }
+  el.html = tx.innerHTML;
+  touch();
+}
+function insertInline(html) {
+  const cur = editingTx();
+  if (!cur) return;
+  const s = getSelection();
+  if (s.rangeCount && !s.getRangeAt(0).collapsed) s.collapseToEnd();
+  document.execCommand('insertHTML', false, html);
+  cur.el.html = cur.tx.innerHTML;
+  touch();
+}
+
+// テキストを編集中か、テキストを 1 つだけ選んでいるときに効く。選んでいるだけなら全文に掛かる
+function textShortcut(e) {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
+  const el = first();
+  if (!state.editing && !(state.sel.size === 1 && el && el.type === 'text')) return false;
+  const k = e.key.toLowerCase();
+  const cmd = [...TEXT_CMDS, ...TECH_CMDS].find((c) => c.key === k && !!c.shift === e.shiftKey);
+  if (!cmd) return false;
+  e.preventDefault();
+  cmd.run();
+  return true;
 }
 
 /* ---------- ポインター操作 ---------- */
@@ -694,12 +806,12 @@ function makeModel(assetId) {
   const d = state.doc, w = Math.round(Math.min(560, d.w * 0.72));
   return baseEl('model', w, Math.round(w * 0.68), {
     asset: assetId, clip: 0, autoplay: true, loop: true, speed: 1, controls: true, grid: true, skeleton: false, wire: false,
-    autoRotate: false, exposure: 1, fps: 30, time: 0, cam: null, bg: '#f2f2f4', radius: 12, keys: true,
+    autoRotate: false, exposure: 1, fps: 0, time: 0, cam: null, bg: '#f2f2f4', radius: 12, keys: true, order: null,
   });
 }
 function fillModel(el, file) {
   if (!file) return;
-  Object.assign(el, { asset: newAsset(file, file.name || 'model.glb', 'glb').id, clip: 0, time: 0, cam: null });
+  Object.assign(el, { asset: newAsset(file, file.name || 'model.glb', 'glb').id, clip: 0, time: 0, cam: null, order: null });
   touch(); commit(); insp();
 }
 function emptySlotAt(pt, type) {
@@ -952,12 +1064,10 @@ function textPanel(el) {
       row('太さ', C.sel('weight', [[400, '標準'], [500, '中'], [700, '太字'], [900, '極太']], { num: true })),
       row('サイズ', C.num('size', { min: 6, max: 400 }), h('span', { class: 'color' }, C.color('color'))),
       row('装飾', h('div', { class: 'btns' },
-        C.btn('<b>B</b>', () => inlineCmd('bold'), { title: '選択範囲を太字' }),
-        C.btn('<i>I</i>', () => inlineCmd('italic'), { title: '選択範囲を斜体' }),
-        C.btn('<u>U</u>', () => inlineCmd('underline'), { title: '選択範囲に下線' }),
-        C.btn('色', () => inlineCmd('foreColor', '#ff3b30'), { title: '選択範囲を強調色に' }),
-        C.btn('リンク', () => { const u = prompt('リンク先の URL'); if (u) inlineCmd('createLink', u); }),
-        C.btn('解除', () => { inlineCmd('removeFormat'); inlineCmd('unlink'); }, { title: '選択範囲の装飾を外す' }))),
+        TEXT_CMDS.map((c) => C.btn(c.html, c.run, { title: `${c.title}（${keyLabel(c.key, c.shift)}）` })))),
+      row('技術書', h('div', { class: 'btns tech' },
+        TECH_CMDS.map((c) => C.btn(c.html, c.run, { title: `${c.title}（${keyLabel(c.key, c.shift)}）` })))),
+      row('マウス', h('div', { class: 'btns tech' }, MOUSE_CMDS.map((c) => C.btn(c.html, c.run, { title: c.title + 'の図を挿入' })))),
       row('行揃え', C.seg('align', [['left', IC.tl, '左揃え'], ['center', IC.tc, '中央揃え'], ['right', IC.tr, '右揃え'], ['justify', IC.tj, '両端揃え']])),
       row('行間', ...C.range('lh', 1, 3, 0.05, (v) => v.toFixed(2))),
       row('字間', ...C.range('ls', -0.05, 0.4, 0.01, (v) => v.toFixed(2)))),
@@ -984,22 +1094,56 @@ function shapePanel(el) {
   return [sec('図形', ...rows)];
 }
 
+// 著者が決めたクリップの並び（元の番号の配列）。null は glb の順のまま全部見せる
+function clipOrder(el, n) {
+  const seen = new Set();
+  const o = (Array.isArray(el.order) ? el.order : []).filter((i) => Number.isInteger(i) && i >= 0 && i < n && !seen.has(i) && seen.add(i));
+  return o.length ? o : [...Array(n).keys()];
+}
+function clipList(el, names) {
+  const n = names.length, order = clipOrder(el, n);
+  const apply = (o) => {
+    el.order = o.length === n && o.every((x, i) => x === i) ? null : o;
+    if (!o.includes(el.clip)) { el.clip = o[0]; el.time = 0; }
+    touch(); commit(); insp();
+  };
+  const move = (pos, d) => { const o = [...order]; [o[pos], o[pos + d]] = [o[pos + d], o[pos]]; apply(o); };
+  const item = (i, pos) => {
+    const shown = pos >= 0;
+    const chk = h('input', { type: 'checkbox', title: '再生バーの一覧に出す' });
+    chk.checked = shown;
+    chk.disabled = shown && order.length === 1;
+    chk.addEventListener('change', () => apply(shown ? order.filter((x) => x !== i) : [...order, i]));
+    const name = h('span', { class: 'clip-name', title: '最初に表示するクリップにする' }, names[i]);
+    name.addEventListener('click', () => { if (!shown) return; el.clip = i; el.time = 0; touch(); commit(); insp(); });
+    return h('div', { class: 'clip-row' + (i === el.clip ? ' cur' : '') + (shown ? '' : ' off') }, chk, name,
+      shown ? C.btn('↑', () => pos > 0 && move(pos, -1), { title: '上へ', cls: pos > 0 ? '' : 'dim' }) : null,
+      shown ? C.btn('↓', () => pos < order.length - 1 && move(pos, 1), { title: '下へ', cls: pos < order.length - 1 ? '' : 'dim' }) : null);
+  };
+  return h('div', { class: 'clips' }, order.map((i, pos) => item(i, pos)), [...Array(n).keys()].filter((i) => !order.includes(i)).map((i) => item(i, -1)));
+}
+
 function modelPanel(el) {
   if (!el.asset) return [sec('アニメーション', hint('枠に glb をドロップするか、ダブルクリックして選びます。'),
     row('', C.btn('glb を選ぶ…', () => pickFiles('#fileGlb', (f) => fillModel(el, f[0])))))];
   if (el.keys === undefined) el.keys = true;
-  const rec = viewers.get(el.id), names = rec ? rec.v.clipNames : [];
+  const rec = viewers.get(el.id), v = rec && rec.v.ready ? rec.v : null, names = v ? v.clipNames : [];
   const a = assets.get(el.asset);
   const rows = [];
-  if (names.length) rows.push(row('クリップ', C.sel('clip', names.map((n, i) => [i, n]), { num: true })));
-  else rows.push(hint(rec && rec.v.ready ? 'この glb にはアニメーションが含まれていません。' : '読み込み中…'));
+  if (names.length > 1) rows.push(clipList(el, names), hint('名前をクリックすると最初に表示するクリップになります。チェックを外したクリップは再生バーの一覧に出ません。'));
+  else if (!names.length) rows.push(hint(v ? 'この glb にはアニメーションが含まれていません。' : '読み込み中…'));
+  if (v && el.keys !== false) {
+    const src = { meta: 'glb に同梱された元のキー位置', estimated: '値の変化から推定（全フレームが焼き込まれた glb）', tracks: 'glb に記録されたキー' }[v.keySource];
+    if (src) rows.push(hint(`キーの印：${src}、${v.keys.length} 個`));
+  }
+  const fileFps = v && v.meta[v.clipIdx] && v.meta[v.clipIdx].fps;
   return [
     sec('アニメーション',
       hint(a ? a.name : ''),
       ...rows,
       row('', C.check('autoplay', '自動再生'), C.check('loop', 'ループ')),
       row('速度', C.sel('speed', [[0.1, '0.1×'], [0.25, '0.25×'], [0.5, '0.5×'], [1, '1×'], [2, '2×']], { num: true })),
-      row('fps', C.sel('fps', [[12, '12 fps'], [24, '24 fps'], [30, '30 fps'], [60, '60 fps']], { num: true })),
+      row('fps', C.sel('fps', [[0, `自動（${fileFps || 30} fps）`], [12, '12 fps'], [24, '24 fps'], [30, '30 fps'], [60, '60 fps']], { num: true })),
       row('開始（秒）', C.num('time', { min: 0, step: 0.01 })),
       hint('自動再生を切ると、開始位置のポーズで止まった図になります。再生バーを動かして決められます。黄色の印が記録されているキーフレームで、Shift を押しながらコマ送りボタンを押すと印へ飛びます。')),
     sec('表示',
@@ -1012,7 +1156,7 @@ function modelPanel(el) {
         C.btn('視点を調整', () => enterInteract(el.id)),
         C.btn('視点をリセット', () => { setProp('cam', null); commit(); setTimeout(() => snapPoster(el.id), 100); }))),
       row('', C.btn('glb を差し替え…', () => pickFiles('#fileGlb', (f) => {
-        el.asset = newAsset(f[0], f[0].name, 'glb').id; el.clip = 0; el.time = 0; el.cam = null;
+        el.asset = newAsset(f[0], f[0].name, 'glb').id; el.clip = 0; el.time = 0; el.cam = null; el.order = null;
         touch(); commit(); insp();
       })))),
   ];
@@ -1492,6 +1636,7 @@ document.addEventListener('keydown', (e) => {
     renderOverlay();
     return;
   }
+  if (!e.target.closest('input,select,textarea') && textShortcut(e)) return;
   if (e.target.closest('input,select,textarea,[contenteditable=true]')) return;
   if (mod && k === 'z') { e.preventDefault(); undo(e.shiftKey ? 1 : -1); return; }
   if (mod && k === 'y') { e.preventDefault(); undo(1); return; }

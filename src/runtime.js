@@ -83,7 +83,7 @@ function tick(now) {
 const DEFAULTS = {
   bg: '', clip: 0, autoplay: true, loop: true, speed: 1, controls: true, grid: true,
   skeleton: false, wire: false, autoRotate: false, exposure: 1, fps: 30, time: 0,
-  cam: null, interactive: true, keys: true,
+  cam: null, interactive: true, keys: true, order: null,
 };
 
 export class Viewer {
@@ -179,8 +179,12 @@ export class Viewer {
 
     this.clips = gltf.animations || [];
     this.clipNames = this.clips.map((c, i) => c.name || `Clip ${i + 1}`);
+    // BlenderBook 書き出しのアドオンが、焼き込む前のキー位置と fps を extras に同梱している
+    const defs = (gltf.parser && gltf.parser.json.animations) || [];
+    this.meta = this.clips.map((c, i) => readMeta(defs[i]));
     this.mixer = new THREE.AnimationMixer(root);
-    this._setClip(this.o.clip, true);
+    const order = this.order();
+    this._setClip(order.includes(this.o.clip) ? this.o.clip : order[0], true);
     root.updateMatrixWorld(true);
 
     const box = new THREE.Box3().setFromObject(root);
@@ -217,6 +221,19 @@ export class Viewer {
     this.message('');
     const poster = this.host.querySelector('.mfv-poster');
     if (poster) poster.remove();
+  }
+
+  // fps を 0（自動）にしていれば、glb に同梱された fps を使う
+  get fps() {
+    const m = this.meta && this.meta[this.clipIdx];
+    return this.o.fps > 0 ? this.o.fps : (m && m.fps) || 30;
+  }
+
+  // 著者が並べ替え・非表示にしたクリップの順番（元の番号の配列）
+  order() {
+    const n = this.clips.length, seen = new Set();
+    const o = (Array.isArray(this.o.order) ? this.o.order : []).filter((i) => Number.isInteger(i) && i >= 0 && i < n && !seen.has(i) && seen.add(i));
+    return o.length ? o : [...Array(n).keys()];
   }
 
   _setClip(i, force) {
@@ -289,7 +306,11 @@ export class Viewer {
     if (o.autoplay !== p.autoplay) this.playing = !!o.autoplay;
     if (o.time !== p.time && !this.playing) { this.t = Math.min(o.time || 0, this.dur); this._pose(); }
     if (JSON.stringify(o.cam) !== JSON.stringify(p.cam)) this._applyCam();
-    if (o.fps !== p.fps || o.keys !== p.keys) this._fillBar();
+    if (JSON.stringify(o.order) !== JSON.stringify(p.order)) {
+      const order = this.order();
+      if (!order.includes(this.clipIdx)) { this.t = 0; this._setClip(order[0]); }
+    }
+    if (o.fps !== p.fps || o.keys !== p.keys || JSON.stringify(o.order) !== JSON.stringify(p.order)) this._fillBar();
     this._applyLook();
     this._syncBar();
   }
@@ -328,7 +349,7 @@ export class Viewer {
     this.seek.type = 'range'; this.seek.className = 'mfv-seek'; this.seek.min = 0; this.seek.step = 1;
     this.seek.addEventListener('input', () => {
       this.playing = false;
-      this.t = Math.min(this.dur, this.seek.value / this.o.fps);
+      this.t = Math.min(this.dur, this.seek.value / this.fps);
       this._pose(); this._syncBar();
     });
     this.seek.addEventListener('change', () => this._emitTime());
@@ -368,14 +389,15 @@ export class Viewer {
 
   _fillBar() {
     this.clipSel.innerHTML = '';
-    this.clipNames.forEach((n, i) => {
+    const order = this.order();
+    for (const i of order) {
       const op = document.createElement('option');
-      op.value = i; op.textContent = n;
+      op.value = i; op.textContent = this.clipNames[i];
       this.clipSel.appendChild(op);
-    });
+    }
     this.clipSel.value = this.clipIdx || 0;
-    this.clipSel.style.display = this.clips.length > 1 ? '' : 'none';
-    this.frames = Math.max(1, Math.round(this.dur * this.o.fps));
+    this.clipSel.style.display = order.length > 1 ? '' : 'none';
+    this.frames = Math.max(1, Math.round(this.dur * this.fps));
     this.seek.max = this.frames;
     this._fillMarks();
     this._syncBar();
@@ -383,9 +405,15 @@ export class Viewer {
 
   // クリップに記録されているキーフレームの時刻を集め、シークバーに印を並べる
   _fillMarks() {
-    const clip = this.clips[this.clipIdx];
+    const clip = this.clips[this.clipIdx], meta = this.meta && this.meta[this.clipIdx];
     const set = new Set();
-    if (clip) for (const tr of clip.tracks) for (const t of tr.times) set.add(Math.round(t * 1000) / 1000);
+    if (meta) {
+      this.keySource = 'meta';
+      for (const t of meta.times) if (t >= -1e-6 && t <= this.dur + 1e-3) set.add(Math.round(t * 1000) / 1000);
+    } else if (clip) {
+      this.keySource = clip.tracks.some(isBaked) ? 'estimated' : 'tracks';
+      for (const tr of clip.tracks) for (const t of isBaked(tr) ? estimateKeys(tr) : tr.times) set.add(Math.round(t * 1000) / 1000);
+    }
     this.keys = [...set].sort((a, b) => a - b);
     if (this.o.keys === false || !this.dur) { this.marks.innerHTML = ''; return; }
     const d = this.dur;
@@ -397,9 +425,10 @@ export class Viewer {
 
   _syncBar() {
     if (!this.seek) return;
-    const f = Math.round(this.t * this.o.fps);
+    const f = Math.round(this.t * this.fps);
     if (document.activeElement !== this.seek) this.seek.value = f;
-    this.timeEl.textContent = `${f} / ${this.frames || 0} f`;
+    const org = (this.meta && this.meta[this.clipIdx] && this.meta[this.clipIdx].frameOrigin) || 0;
+    this.timeEl.textContent = `${f + org} / ${(this.frames || 0) + org} f`;
     const icon = this.playing ? ICON.pause : ICON.play;
     if (this._icon !== icon) { this.playBtn.innerHTML = icon; this._icon = icon; }
     const sp = String(this.o.speed);
@@ -419,8 +448,8 @@ export class Viewer {
       if (k == null) return;
       this.t = Math.min(this.dur, k);
     } else {
-      const f = Math.round(this.t * this.o.fps) + dir;
-      this.t = Math.max(0, Math.min(this.dur, f / this.o.fps));
+      const f = Math.round(this.t * this.fps) + dir;
+      this.t = Math.max(0, Math.min(this.dur, f / this.fps));
     }
     this._pose(); this._syncBar(); this._emitTime();
   }
@@ -506,6 +535,56 @@ export class Viewer {
     this.view.remove();
     this.bar.remove();
   }
+}
+
+function readMeta(def) {
+  try {
+    const raw = def && def.extras && def.extras.blenderbook;
+    const m = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!m || !Array.isArray(m.times)) return null;
+    return { fps: m.fps > 0 ? m.fps : 0, times: m.times.filter((t) => Number.isFinite(t)), frameOrigin: m.frameOrigin || 0 };
+  } catch { return null; }
+}
+
+// 一定間隔で 5 点以上並ぶトラックは、書き出し時に毎フレーム焼き込まれたものとみなす
+function isBaked(tr) {
+  const t = tr.times, n = t.length;
+  if (n < 5) return false;
+  const d = (t[n - 1] - t[0]) / (n - 1);
+  for (let i = 1; i < n; i++) if (Math.abs(t[i] - t[i - 1] - d) > d * 0.01) return false;
+  return true;
+}
+
+// 焼き込まれた値の並びから元のキーを推定する。拾えるのは端点、動きが折り返す点、
+// 止まる点と動き出す点。動きの途中に滑らかにつないだキーは値に痕跡が残らないので拾えない
+function estimateKeys(tr) {
+  const t = tr.times, n = t.length, k = tr.getValueSize(), v = Float64Array.from(tr.values);
+  if (tr.ValueTypeName === 'quaternion') {
+    for (let i = 1; i < n; i++) {
+      let dot = 0;
+      for (let c = 0; c < 4; c++) dot += v[i * 4 + c] * v[(i - 1) * 4 + c];
+      if (dot < 0) for (let c = 0; c < 4; c++) v[i * 4 + c] = -v[i * 4 + c];
+    }
+  }
+  let range = 0;
+  for (let c = 0; c < k; c++) {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < n; i++) { lo = Math.min(lo, v[i * k + c]); hi = Math.max(hi, v[i * k + c]); }
+    range = Math.max(range, hi - lo);
+  }
+  const eps = Math.max(range * 1e-4, 1e-7);
+  const out = [t[0], t[n - 1]];
+  for (let i = 1; i < n - 1; i++) {
+    let still1 = true, still2 = true, turn = false;
+    for (let c = 0; c < k; c++) {
+      const a = v[i * k + c] - v[(i - 1) * k + c], b = v[(i + 1) * k + c] - v[i * k + c];
+      if (Math.abs(a) > eps) still1 = false;
+      if (Math.abs(b) > eps) still2 = false;
+      if (a * b < 0 && Math.abs(a) > eps && Math.abs(b) > eps) turn = true;
+    }
+    if (turn || still1 !== still2) out.push(t[i]);
+  }
+  return out;
 }
 
 const bufCache = new Map();
