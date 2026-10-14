@@ -219,7 +219,41 @@ function innerHTML(el, ctx) {
   }
   return '';
 }
-const elHTML = (el, ctx) => `<div class="mf-el" style="${esc(outerStyle(el))}">${innerHTML(el, ctx)}</div>`;
+// 書き出し時は、スマホ向けの 1 段組みで使う読み順（--o）と元の寸法を CSS 変数で持たせる
+const elHTML = (el, ctx) => {
+  const extra = ctx.order ? `--o:${ctx.order.get(el.id) ?? 0};--ar:${el.w}/${el.h};--w:${el.w}px;--h:${el.h}px;` : '';
+  const cls = `mf-el mf-${el.type}${el.type === 'text' && el.vertical ? ' mf-vert' : ''}`;
+  return `<div class="${cls}" style="${esc(outerStyle(el) + extra)}">${innerHTML(el, ctx)}</div>`;
+};
+
+// 紙面の要素を読む順に並べる（XY カット）。いちばん広い余白で縦か横に切り分けることを繰り返すので、
+// 段組みは左の段から、段の中は上から読む。図形は 1 段組みでは出さないので順番にも入れない
+function readingOrder(els) {
+  const out = [];
+  const cut = (list) => {
+    if (list.length <= 1) { out.push(...list); return; }
+    // いちばん広い余白 1 か所だけで 2 つに分ける。全部の余白で一度に切ると、
+    // 段組みの見出しと本文の間の狭い余白でも先に切れて、段をまたいだ順になる
+    const split = (lo, hi) => {
+      const s = [...list].sort((p, q) => p.b[lo] - q.b[lo]);
+      let end = s[0].b[hi], best = 0, at = -1;
+      for (let i = 1; i < s.length; i++) {
+        const gap = s[i].b[lo] - end;
+        if (gap > best) { best = gap; at = i; }
+        end = Math.max(end, s[i].b[hi]);
+      }
+      return { groups: at < 0 ? [s] : [s.slice(0, at), s.slice(at)], best };
+    };
+    const y = split('t', 'b'), x = split('l', 'r');
+    if (y.groups.length === 1 && x.groups.length === 1) {
+      out.push(...[...list].sort((p, q) => p.b.t - q.b.t || p.b.l - q.b.l));
+      return;
+    }
+    ((x.groups.length > 1 && x.best > y.best) || y.groups.length === 1 ? x : y).groups.forEach(cut);
+  };
+  cut(els.filter((e) => e.type !== 'shape').map((e) => ({ e, b: aabb(e) })));
+  return out.map((i) => i.e);
+}
 const liveCtx = (mode) => ({ mode, img: (id) => (assets.get(id) || {}).url || '' });
 
 /* ---------- ページ描画 ---------- */
@@ -1164,11 +1198,16 @@ function docPanel() {
   vbg.addEventListener('change', () => { d.viewBg = vbg.value; scheduleSave(); commit(); });
   const flow = h('select', {}, [['paged', 'ページ送り'], ['scroll', '縦スクロール'], ['seamless', '縦スクロール（つなげる）']].map(([v, l]) => h('option', { value: v }, l)));
   flow.value = d.flow || 'scroll';
+  const rc = h('input', { type: 'checkbox' });
+  rc.checked = d.reflow !== false;
+  rc.addEventListener('change', () => { d.reflow = rc.checked; scheduleSave(); commit(); });
+  const reflowChk = h('label', { class: 'chk grow' }, rc, 'スマホでは 1 段組みで表示');
   flow.addEventListener('change', () => { d.flow = flow.value; scheduleSave(); commit(); insp(); });
   return [
     h('div', { class: 'insp-head' }, '書類'),
     sec('書類', row('タイトル', title), row('ページサイズ', size), row('', pair('W', wI), pair('H', hI))),
-    sec('書き出した HTML の読み方', row('形式', flow), row('背景', vbg),
+    sec('書き出した HTML の読み方', row('形式', flow), row('背景', vbg), row('', reflowChk),
+      hint('スマホでは紙面を縮めず、文字を原寸のまま上から読む順に 1 段で並べ直します。段組みは左の段から読みます。図形は表示しません。「プレビュー」→「スマホで見る」で確かめられます。'),
       hint({ paged: '1 ページずつ表示し、矢印キーやボタンでめくります。', scroll: 'ページを縦に並べ、スクロールで読み進めます。', seamless: 'ページの切れ目をなくし、1 枚の長い紙面として読めます。' }[d.flow || 'scroll'])),
     sec(`ページ ${state.pageIdx + 1}`, row('背景色', h('span', { class: 'color' }, bg))),
     sec('使い方',
@@ -1581,7 +1620,10 @@ async function buildHTML() {
     if (a.type === 'image') urls.set(a.id, data);
     else glbs.push(`<script type="application/octet-stream" id="mf-asset-${a.id}">${data.slice(data.indexOf(',') + 1)}</script>\n`);
   }
-  const ctx = { mode: 'export', img: (id) => urls.get(id) || '' };
+  const order = new Map();
+  for (const pg of d.pages) readingOrder(pg.els).forEach((el, i) => order.set(el.id, i));
+  const ctx = { mode: 'export', img: (id) => urls.get(id) || '', order };
+  const reflow = d.reflow !== false;
   const fonts = new Set();
   for (const pg of d.pages) for (const el of pg.els) if (el.type === 'text' && FONTS[el.font] && FONTS[el.font].g) fonts.add(el.font);
   const dark = parseInt(d.viewBg.slice(1, 3), 16) < 128, flow = d.flow || 'scroll';
@@ -1602,16 +1644,44 @@ background:${dark ? 'rgba(28,28,30,.8)' : 'rgba(255,255,255,.8)'};color:${dark ?
 .paged{padding:20px 16px;min-height:calc(100vh - 45px);justify-content:center}
 .paged .mf-wrap{display:none}.paged .mf-wrap.cur{display:block}
 .mf-wrap>.mf-page{position:absolute;left:0;top:0;width:${d.w}px;height:${d.h}px;transform:scale(var(--s));transform-origin:0 0}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+.mf-bar{gap:10px;padding-left:max(20px,env(safe-area-inset-left));padding-right:max(20px,env(safe-area-inset-right))}
+.mf-nav .mf-flowbtn{all:unset;display:none;place-items:center;width:auto;height:28px;padding:0 10px;border-radius:8px;font-size:12px;white-space:nowrap;cursor:pointer;
+background:${dark ? 'rgba(255,255,255,.12)' : 'rgba(0,0,0,.06)'}}
+@media (max-width:899px){.mf-nav .mf-flowbtn{display:grid}}
+.mf-phone{background:#8e8e93}.mf-phone .mf-nav .mf-flowbtn{display:grid}
+.mf-phone body{max-width:390px;margin:0 auto;min-height:100vh;background:${d.viewBg};box-shadow:0 20px 60px rgba(0,0,0,.3)}
+/* スマホでは紙面を縮めず、要素を読む順に 1 段で並べ直す。文字は原寸、図は幅いっぱい */
+.mf-reflow .mf-doc{display:block;padding:0 0 48px;min-height:0}
+.mf-reflow .mf-stack{display:block;box-shadow:none}
+.mf-reflow .mf-wrap{width:auto;height:auto;box-shadow:none;margin:0 0 10px}
+.mf-reflow .mf-wrap>.mf-page{position:relative;width:auto;height:auto;transform:none;display:flex;flex-direction:column;gap:14px;
+padding:28px max(20px,env(safe-area-inset-right)) 32px max(20px,env(safe-area-inset-left))}
+.mf-reflow .mf-el{position:relative!important;left:auto!important;top:auto!important;width:auto!important;height:auto!important;transform:none!important;order:var(--o)}
+.mf-reflow .mf-text .mf-tx{height:auto!important}
+.mf-reflow .mf-shape{display:none}
+.mf-reflow .mf-image,.mf-reflow .mf-model{width:min(100%,var(--w))!important;aspect-ratio:var(--ar);align-self:center}
+.mf-reflow .mf-model{min-height:240px}
+.mf-reflow .mf-vert{width:min(100%,var(--w))!important;height:var(--h)!important;align-self:center}
 @page{size:${d.w}px ${d.h}px;margin:0}
 @media print{html{background:#fff}.mf-bar{display:none}.mf-doc{--s:1!important;padding:0;display:block;min-height:0}.mf-stack{display:block;box-shadow:none}.mf-wrap{display:block!important;box-shadow:none;break-after:page}}
 `;
-  const reader = `(function(){var W=${d.w},H=${d.h},paged=${flow === 'paged'},doc=document.querySelector('.mf-doc'),cur=0;
-var wraps=[].slice.call(document.querySelectorAll('.mf-wrap')),cnt=document.querySelector('.mf-count');
-function fit(){var s=paged?Math.min((innerWidth-32)/W,(innerHeight-85)/H):Math.min((innerWidth-32)/W,1.4);doc.style.setProperty('--s',Math.max(.2,s))}
+  const reader = `(function(){var W=${d.w},H=${d.h},paged=${flow === 'paged'},allow=${reflow},doc=document.querySelector('.mf-doc'),cur=0,html=document.documentElement,force=null;
+var wraps=[].slice.call(document.querySelectorAll('.mf-wrap')),cnt=document.querySelector('.mf-count'),tg=document.querySelector('.mf-flowbtn');
+var txs=[].slice.call(document.querySelectorAll('.mf-tx'));
+if(location.hash==='#mobile'){force=true;html.classList.add('mf-phone')}
+if(!allow&&tg)tg.remove();
+function fit(){var w=doc.clientWidth-32,s=paged?Math.min(w/W,(innerHeight-85)/H):Math.min(w/W,1.4);doc.style.setProperty('--s',Math.max(.2,s))}
+function layout(){var on=allow&&(force!==null?force:innerWidth<600);
+if(on!==html.classList.contains('mf-reflow')){html.classList.toggle('mf-reflow',on);
+txs.forEach(function(t){if(on){var f=parseFloat(t.style.fontSize);if(f>28){t.dataset.fs=t.style.fontSize;t.style.fontSize=Math.round(28+(f-28)*.4)+'px'}}else if(t.dataset.fs){t.style.fontSize=t.dataset.fs;delete t.dataset.fs}});
+if(tg)tg.textContent=on?'原寸で見る':'1段で読む'}
+fit()}
+if(tg)tg.onclick=function(){force=!html.classList.contains('mf-reflow');layout()};
 function label(i){cnt.textContent=(i+1)+' / '+wraps.length}
-function show(i){cur=Math.max(0,Math.min(wraps.length-1,i));wraps.forEach(function(w,j){w.classList.toggle('cur',j===cur)});label(cur);try{history.replaceState(null,'','#p'+(cur+1))}catch(e){}}
+function show(i){var p=cur;cur=Math.max(0,Math.min(wraps.length-1,i));wraps.forEach(function(w,j){w.classList.toggle('cur',j===cur)});label(cur);if(p!==cur)scrollTo(0,0);try{history.replaceState(null,'','#p'+(cur+1))}catch(e){}}
 function go(d){if(paged)show(cur+d);else{var t=wraps[Math.max(0,Math.min(wraps.length-1,cur+d))];if(t)t.scrollIntoView({behavior:'smooth',block:'start'})}}
-addEventListener('resize',fit);fit();
+addEventListener('resize',layout);layout();
 document.querySelector('.mf-prev').onclick=function(){go(-1)};document.querySelector('.mf-next').onclick=function(){go(1)};
 if(paged){show((parseInt(location.hash.slice(2))||1)-1);
 addEventListener('keydown',function(e){if(/INPUT|SELECT/.test(e.target.tagName))return;var k=e.key;
@@ -1619,14 +1689,16 @@ if(k==='ArrowRight'||k==='PageDown'||k===' '){e.preventDefault();show(cur+1)}els
 var acc=0,lock=0,last=0;addEventListener('wheel',function(e){if(e.ctrlKey||(e.target.closest&&e.target.closest('.mfv-armed,select')))return;
 var now=Date.now(),dy=(e.deltaY||e.deltaX)*(e.deltaMode===1?33:e.deltaMode===2?400:1);if(now-last>250||dy*acc<0)acc=0;last=now;
 if(Math.abs(dy)>=50){show(cur+(dy>0?1:-1));acc=0;return}
-if(now<lock)return;acc+=dy;if(Math.abs(acc)>=120){show(cur+(acc>0?1:-1));acc=0;lock=now+160}},{capture:true,passive:true})}
+if(now<lock)return;acc+=dy;if(Math.abs(acc)>=120){show(cur+(acc>0?1:-1));acc=0;lock=now+160}},{capture:true,passive:true});
+var sx=null,sy=0;addEventListener('touchstart',function(e){sx=e.touches.length===1&&!e.target.closest('.mfv')?e.touches[0].clientX:null;sy=e.touches[0].clientY},{passive:true});
+addEventListener('touchend',function(e){if(sx===null)return;var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;sx=null;if(Math.abs(dx)>60&&Math.abs(dy)<Math.abs(dx)*.6)show(cur+(dx<0?1:-1))},{passive:true})}
 else{var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){cur=wraps.indexOf(e.target);label(cur)}})},{rootMargin:'-45% 0px -45% 0px'});
 wraps.forEach(function(w){io.observe(w)})}
 if(window.MFV)MFV.autoInit();})();`;
   const parts = [
-    `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>${esc(d.title)}</title>\n<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(READER_ICON)}">\n`,
+    `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n<title>${esc(d.title)}</title>\n<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(READER_ICON)}">\n`,
     fonts.size ? `<link rel="stylesheet" href="${fontsHref([...fonts])}">\n` : '',
-    `<style>${css}</style>\n</head>\n<body>\n<header class="mf-bar"><span class="mf-title">${esc(d.title)}</span><span class="mf-nav"><button class="mf-prev" title="前のページ">‹</button><span class="mf-count">1 / ${d.pages.length}</span><button class="mf-next" title="次のページ">›</button></span></header>\n<main class="mf-doc ${flow}">\n<div class="mf-stack">\n`,
+    `<style>${css}</style>\n</head>\n<body>\n<header class="mf-bar"><span class="mf-title">${esc(d.title)}</span><span class="mf-nav"><button class="mf-flowbtn" title="スマホ向けの 1 段組みと原寸の紙面を切り替える">1段で読む</button><button class="mf-prev" title="前のページ">‹</button><span class="mf-count">1 / ${d.pages.length}</span><button class="mf-next" title="次のページ">›</button></span></header>\n<main class="mf-doc ${flow}">\n<div class="mf-stack">\n`,
   ];
   d.pages.forEach((pg, i) => {
     parts.push(`<section class="mf-wrap" id="p${i + 1}"><div class="mf-page" style="background:${pg.bg}">\n${pg.els.map((el) => elHTML(el, ctx)).join('\n')}\n</div></section>\n`);
@@ -1641,8 +1713,8 @@ async function exportHTML() {
   const name = await saveBlob(blob, fileBase() + '.html', { 'text/html': ['.html'] });
   if (name) toast(`${name} を書き出しました（${(blob.size / 1048576).toFixed(1)} MB）`);
 }
-async function preview() {
-  const url = URL.createObjectURL(await buildHTML());
+async function preview(mobile) {
+  const url = URL.createObjectURL(await buildHTML()) + (mobile ? '#mobile' : '');
   if (!window.open(url, '_blank')) toast('ポップアップがブロックされました');
 }
 
@@ -1683,7 +1755,11 @@ const ACT = {
     null,
     { label: 'サンプルを置く', note: '曲がる筒', fn: () => addEl(makeModel(newAsset(sampleBlob(), 'bend.glb', 'glb').id)) },
   ]),
-  preview, export: exportHTML,
+  preview: (b) => popup(b, [
+    { label: 'PC で見る', fn: () => preview(false) },
+    { label: 'スマホで見る', note: '1 段組み', fn: () => preview(true) },
+  ]),
+  export: exportHTML,
   pageAdd: (b) => pageMenu(b),
   pageDup: () => {
     exitModes();

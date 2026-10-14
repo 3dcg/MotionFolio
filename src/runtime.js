@@ -138,6 +138,9 @@ export class Viewer {
     this.controls.dampingFactor = 0.12;
     this.controls.addEventListener('change', () => { this.dirty = true; });
     this.controls.addEventListener('end', () => this._emitCam());
+    // スマホでは縦のスワイプをページのスクロールに残し、横のスワイプだけで回す。
+    // そうしないと画面幅いっぱいの 3D に指が乗った時点でスクロールできなくなる
+    if (window.matchMedia && matchMedia('(pointer: coarse)').matches) this.cv.style.touchAction = 'pan-y';
 
     this.io = new IntersectionObserver((es) => {
       this.visible = es[es.length - 1].isIntersecting;
