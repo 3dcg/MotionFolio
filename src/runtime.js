@@ -39,8 +39,9 @@ const CSS = `
 const ICON = {
   play: '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>',
   pause: '<svg viewBox="0 0 16 16"><path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z"/></svg>',
-  prev: '<svg viewBox="0 0 16 16"><path d="M3 3h2v10H3zM13 3v10L6 8z"/></svg>',
-  next: '<svg viewBox="0 0 16 16"><path d="M11 3h2v10h-2zM3 3v10l7-5z"/></svg>',
+  // キーフレーム間の移動。矢印の先にキーの菱形を置いて、コマ送りと見分けられるようにする
+  prev: '<svg viewBox="0 0 16 16"><path d="M1.5 8L7 3.5v9z"/><path d="M11.5 4.3l3.7 3.7-3.7 3.7L7.8 8z"/></svg>',
+  next: '<svg viewBox="0 0 16 16"><path d="M14.5 8L9 3.5v9z"/><path d="M4.5 4.3l3.7 3.7-3.7 3.7L.8 8z"/></svg>',
   bone: '<svg viewBox="0 0 16 16"><path d="M4.2 1.6a2 2 0 0 1 2.9 2.3l5 5a2 2 0 1 1 1.3 3.3 2 2 0 1 1-3.3 1.3 2 2 0 0 1-.4-1.9l-5-5A2 2 0 1 1 2.4 3.3a2 2 0 0 1 1.8-1.7z"/></svg>',
 };
 
@@ -370,8 +371,8 @@ export class Viewer {
       if (!this.playing) { this.t = this._clamp(this.t); this._pose(); this._emitTime(); }
       this._syncBar();
     });
-    b('mfv-prev', ICON.prev, '1 フレーム戻る（Shift で前のキーフレーム）', (e) => this._step(-1, e.shiftKey));
-    b('mfv-next', ICON.next, '1 フレーム進む（Shift で次のキーフレーム）', (e) => this._step(1, e.shiftKey));
+    b('mfv-prev', ICON.prev, '前のキーフレームへ（Shift で 1 フレーム戻る）', (e) => this._step(-1, !e.shiftKey));
+    b('mfv-next', ICON.next, '次のキーフレームへ（Shift で 1 フレーム進む）', (e) => this._step(1, !e.shiftKey));
     this.seek = document.createElement('input');
     this.seek.type = 'range'; this.seek.className = 'mfv-seek'; this.seek.min = 0; this.seek.step = 1;
     this.seek.addEventListener('input', () => {
@@ -476,8 +477,9 @@ export class Viewer {
     this.playing = false;
     if (toKey && this.keys.length) {
       const k = dir > 0 ? this.keys.find((x) => x > this.t + 1e-3) : [...this.keys].reverse().find((x) => x < this.t - 1e-3);
-      if (k == null) return;
-      this.t = this._clamp(k);
+      // その向きにキーがなければ再生範囲の端へ。端にいれば動かない
+      if (k == null && Math.abs(this.t - (dir > 0 ? this.t1 : this.t0)) < 1e-6) return;
+      this.t = this._clamp(k ?? (dir > 0 ? this.t1 : this.t0));
     } else {
       const f = Math.round(this.t * this.fps) + dir;
       this.t = this._clamp(f / this.fps);
