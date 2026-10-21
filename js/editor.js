@@ -71,13 +71,15 @@ const FONTS = {
 const fontsHref = (keys) => 'https://fonts.googleapis.com/css2?' + keys.map((k) => 'family=' + FONTS[k].g).join('&') + '&display=swap';
 
 const INK = '#1d1d1f';
-const TEXT_BASE = { font: 'notosans', color: INK, bg: '', pad: 0, radius: 0, ls: 0, align: 'left' };
+const TEXT_BASE = { font: 'notosans', color: INK, bg: '', pad: 0, radius: 0, ls: 0, align: 'left', palt: false };
+// Noto Sans JP に合わせた大きさ。見出し系は詰め組み（palt）にしてかなの間を詰め、
+// 本文は読みやすさのため詰めずに一回り小さくする。極太（900）は Noto では重すぎるので太字（700）
 const TEXT_PRESETS = {
-  title: { label: 'タイトル', size: 52, weight: 900, lh: 1.25, ls: 0.01 },
-  heading: { label: '見出し', size: 30, weight: 700, lh: 1.35 },
-  sub: { label: '小見出し', size: 20, weight: 700, lh: 1.45 },
-  body: { label: '本文', size: 15, weight: 400, lh: 1.9 },
-  caption: { label: 'キャプション', size: 12, weight: 400, lh: 1.6, color: '#6e6e73' },
+  title: { label: 'タイトル', size: 46, weight: 700, lh: 1.3, ls: 0.01, palt: true },
+  heading: { label: '見出し', size: 28, weight: 700, lh: 1.4, palt: true },
+  sub: { label: '小見出し', size: 19, weight: 700, lh: 1.5, palt: true },
+  body: { label: '本文', size: 14, weight: 400, lh: 1.9 },
+  caption: { label: 'キャプション', size: 12, weight: 400, lh: 1.6, color: '#6e6e73', palt: true },
   code: { label: 'コード', size: 13, weight: 400, lh: 1.65, font: 'mono', color: '#e8e8ed', bg: '#1e1f24', pad: 18, radius: 10 },
 };
 const SIZES = [
@@ -190,7 +192,7 @@ function deco(el) {
 function textStyle(el) {
   return `font-family:${(FONTS[el.font] || FONTS.sans).css};font-size:${el.size}px;font-weight:${el.weight};color:${el.color};` +
     `text-align:${el.align};line-height:${el.lh};letter-spacing:${el.ls}em;padding:${el.pad}px;` +
-    (el.bg ? `background:${el.bg};` : '') + deco(el) + (el.vertical ? 'writing-mode:vertical-rl;' : '') + (el.autoH ? '' : 'height:100%;');
+    (el.bg ? `background:${el.bg};` : '') + (el.palt ? 'font-feature-settings:"palt";' : '') + deco(el) + (el.vertical ? 'writing-mode:vertical-rl;' : '') + (el.autoH ? '' : 'height:100%;');
 }
 function modelStyle(el) {
   return 'width:100%;height:100%;' + (el.bg ? `background:${el.bg};` : '') + deco(el);
@@ -1519,6 +1521,7 @@ function textPanel(el) {
       row('背景', C.color('bg', true)),
       row('余白', C.num('pad', { min: 0, max: 200 })),
       row('', C.check('autoH', '高さを内容に合わせる', () => insp())),
+      row('', C.check('palt', '詰め組み（かなの間を詰める）')),
       row('', C.check('vertical', '縦書き', (on) => {
         for (const t of selEls()) if (t.type === 'text') { t.autoH = !on; if (on) { t.h = Math.max(t.h, 320); } }
         touch(); insp();
@@ -1849,15 +1852,15 @@ const TEMPLATES = {
     g.S(g.m, g.y(120), 56, 6),
     g.T('caption', 'ANIMATION TECHNICAL BOOK', g.m, g.y(146), g.cw, { ls: 0.24, weight: 700, color: ACCENT }),
     g.T('title', 'タイトルを入力', g.m, g.y(176), g.cw),
-    g.T('body', 'この本で扱う内容を一文で。誰に向けた、何のための本かを書きます。', g.m, g.y(262), g.cw * 0.8, { size: 17, color: '#48484a' }),
+    g.T('body', 'この本で扱う内容を一文で。誰に向けた、何のための本かを書きます。', g.m, g.y(262), g.cw * 0.8, { size: 16, color: '#48484a' }),
     g.M(g.m, g.y(380), g.cw, g.y(520)),
     g.T('caption', '著者名　／　発行年', g.m, g.y(1010), g.cw),
   ] },
   chapter: { label: '章扉', note: '章番号と導入', make: (g) => [
     g.T('title', '01', g.m, g.y(170), g.cw, { size: Math.round(g.y(150)), color: ACCENT, lh: 1 }),
-    g.T('heading', '章のタイトル', g.m, g.y(370), g.cw, { size: 36 }),
+    g.T('heading', '章のタイトル', g.m, g.y(370), g.cw, { size: 32 }),
     g.S(g.m, g.y(440), 56, 6),
-    g.T('body', 'この章で身につくことを、二、三行で予告します。読み終えたときに何ができるようになるのかを先に示すと、読者は安心して読み進められます。', g.m, g.y(476), g.cw * 0.78, { size: 16, color: '#48484a' }),
+    g.T('body', 'この章で身につくことを、二、三行で予告します。読み終えたときに何ができるようになるのかを先に示すと、読者は安心して読み進められます。', g.m, g.y(476), g.cw * 0.78, { size: 15, color: '#48484a' }),
   ] },
   figure: { label: '図と本文', note: '大きな 3D ＋ 2 段組み', make: (g) => [
     g.T('caption', 'SECTION 1.1', g.m, g.y(64), g.cw, { ls: 0.2, weight: 700, color: ACCENT }),
@@ -1871,7 +1874,7 @@ const TEMPLATES = {
     g.T('heading', '見出しを入力', g.m, g.y(64), g.cw),
     g.M(g.m, g.y(140), g.cw * 0.58, g.y(500)),
     g.T('sub', 'ポイント', g.m + g.cw * 0.62, g.y(140), g.cw * 0.38),
-    g.T('body', '図の隣に、見るべき点を短くまとめます。重心の移動、接地のタイミングなど。', g.m + g.cw * 0.62, g.y(184), g.cw * 0.38, { size: 13.5, lh: 1.8 }),
+    g.T('body', '図の隣に、見るべき点を短くまとめます。重心の移動、接地のタイミングなど。', g.m + g.cw * 0.62, g.y(184), g.cw * 0.38, { size: 13, lh: 1.8 }),
     g.T('caption', '図 1　図の説明を入力。', g.m, g.y(654), g.cw * 0.58),
     g.T('body', '本文を入力します。図と要点で掴んだ内容を、ここで順を追って説明します。', g.m, g.y(710), g.cw),
   ] },
@@ -1893,7 +1896,7 @@ const TEMPLATES = {
         g.T('title', String(i + 1), g.m, y0 - 8, 50, { size: 44, color: ACCENT, lh: 1.1 }),
         g.I(ix, y0, iw, g.y(250)),
         g.T('sub', `ステップ ${i + 1} の見出し`, tx, y0, g.m + g.cw - tx),
-        g.T('body', 'この手順で行う操作と、確認すべき結果を書きます。', tx, y0 + 42, g.m + g.cw - tx, { size: 13.5, lh: 1.8 }),
+        g.T('body', 'この手順で行う操作と、確認すべき結果を書きます。', tx, y0 + 42, g.m + g.cw - tx, { size: 13, lh: 1.8 }),
       ];
     }),
   ] },
@@ -1940,11 +1943,11 @@ function welcomeDoc() {
     { ...makeModel(a.id), x: 64, y: 300, w: 666, h: 420 },
     T('caption', '図 1　サンプルの筒。ダブルクリックすると視点とポーズを調整できます。再生バーはそのまま書き出し先でも動きます。', 64, 734, 666),
     T('sub', '置く', 64, 800, 200),
-    T('body', 'ツールバーから追加するか、画像や glb をウインドウへドラッグします。ガイドに吸着させながら位置を整えられます。', 64, 838, 200, { size: 13, lh: 1.8 }),
+    T('body', 'ツールバーから追加するか、画像や glb をウインドウへドラッグします。ガイドに吸着させながら位置を整えられます。', 64, 838, 200, { size: 12.5, lh: 1.8 }),
     T('sub', '動かす', 297, 800, 200),
-    T('body', 'クリップ、速度、ループ、スケルトン表示を右のパネルで切り替えます。自動再生を切れば、任意のフレームで止めた図になります。', 297, 838, 200, { size: 13, lh: 1.8 }),
+    T('body', 'クリップ、速度、ループ、スケルトン表示を右のパネルで切り替えます。自動再生を切れば、任意のフレームで止めた図になります。', 297, 838, 200, { size: 12.5, lh: 1.8 }),
     T('sub', '書き出す', 530, 800, 200),
-    T('body', '「HTML 書き出し」で、画像もモデルも埋め込んだ 1 ファイルにまとまります。ブラウザだけで読め、印刷にも対応します。', 530, 838, 200, { size: 13, lh: 1.8 }),
+    T('body', '「HTML 書き出し」で、画像もモデルも埋め込んだ 1 ファイルにまとまります。ブラウザだけで読め、印刷にも対応します。', 530, 838, 200, { size: 12.5, lh: 1.8 }),
   );
 }
 
