@@ -624,6 +624,113 @@ function newlinesToBr(tx, sel) {
   sel.setBaseAndExtent(...locate(keep[0]), ...locate(keep[1]));
 }
 
+// 選択範囲が node の中身に掛かっているか。端に触れているだけは含めない。カーソルだけなら中にあるか
+function rangeHits(r, node, first, last) {
+  const nr = document.createRange();
+  if (first) { nr.setStartBefore(first); nr.setEndAfter(last); } else nr.selectNodeContents(node);
+  if (r.collapsed) return nr.comparePoint(r.startContainer, r.startOffset) === 0;
+  return r.compareBoundaryPoints(Range.START_TO_END, nr) > 0 && r.compareBoundaryPoints(Range.END_TO_START, nr) < 0;
+}
+const isList = (n) => n && (n.nodeName === 'UL' || n.nodeName === 'OL');
+const cloneList = (l) => { const n = document.createElement(l.tagName); if (l.className) n.className = l.className; return n; };
+
+// 選んだ項目だけを箇条書きから外し、普通の段落に戻す。前後の項目は箇条書きのまま残す
+function unlistItems(l, picked) {
+  const out = [];
+  let group = null, lastPicked = false;
+  for (const c of [...l.childNodes]) {
+    if (c.nodeName === 'LI' && picked.has(c)) {
+      group = null;
+      const d = document.createElement('div');
+      while (c.firstChild) d.append(c.firstChild);
+      out.push(d);
+      lastPicked = true;
+      continue;
+    }
+    // 外した項目のすぐ後の入れ子の段は、箇条書きのまま新しいまとまりへ入れる
+    if (!group) { group = cloneList(l); out.push(group); }
+    group.append(c);
+    lastPicked = false;
+  }
+  l.replaceWith(...out.filter((n) => !isList(n) || n.childNodes.length));
+}
+
+// ブラウザの execCommand は行頭のキーキャップなどを項目と取り違えて崩すので、
+// 行を自前で集めて箇条書きにする。行は <div> / <p> か、<br> で区切った並び
+function listLines(tx, r, tag, cls) {
+  const pieces = [];
+  let run = [];
+  const flushRun = () => { if (run.length) pieces.push({ nodes: run }); run = []; };
+  for (const n of [...tx.childNodes]) {
+    if (isList(n)) { flushRun(); pieces.push({ keep: n }); continue; }
+    if (n.nodeName === 'DIV' || n.nodeName === 'P') {
+      flushRun();
+      if (n.querySelector('ul,ol')) { pieces.push({ keep: n }); continue; }
+      const segs = [];
+      let seg = [];
+      for (const c of [...n.childNodes]) {
+        if (c.nodeName === 'BR') { segs.push(seg.length ? seg : [c]); seg = []; } else seg.push(c);
+      }
+      if (seg.length) segs.push(seg);
+      if (!segs.length) segs.push([]);
+      const hit = segs.map((s) => (s.length ? rangeHits(r, null, s[0], s[s.length - 1]) : rangeHits(r, n)));
+      if (!hit.some(Boolean)) { pieces.push({ keep: n }); continue; }
+      segs.forEach((s, i) => pieces.push({ nodes: s, hit: hit[i], from: n }));
+      continue;
+    }
+    if (n.nodeName === 'BR') { if (!run.length) run.push(n); flushRun(); continue; }
+    run.push(n);
+  }
+  flushRun();
+  for (const p of pieces) if (p.nodes && p.hit === undefined) p.hit = rangeHits(r, null, p.nodes[0], p.nodes[p.nodes.length - 1]);
+  if (!pieces.some((p) => p.hit)) return false;
+  const out = [];
+  let list = null;
+  for (const p of pieces) {
+    if (p.keep) { list = null; out.push(p.keep); continue; }
+    if (p.hit) {
+      if (!list) { list = document.createElement(tag); list.className = cls; out.push(list); }
+      const li = document.createElement('li');
+      li.append(...p.nodes.filter((n) => n.nodeName !== 'BR' || p.nodes.length === 1));
+      list.append(li);
+    } else {
+      list = null;
+      const d = document.createElement('div');
+      d.append(...p.nodes.filter((n) => n.nodeName !== 'BR' || p.nodes.length === 1));
+      out.push(d);
+    }
+  }
+  tx.replaceChildren(...out);
+  return true;
+}
+// 同じ種類の箇条書きが隣り合ったら 1 つにまとめる（番号が途中で 1 に戻らないように）
+function mergeLists(tx) {
+  for (const l of [...tx.children]) {
+    const prev = l.previousElementSibling;
+    if (isList(l) && isList(prev) && prev.tagName === l.tagName && prev.className === l.className) { prev.append(...l.childNodes); l.remove(); }
+  }
+}
+
+// Tab で 1 段下げる。直前の項目の下に入れ子の段を作る（直前が入れ子の段ならそこへ足す）
+function indentItem(li) {
+  const prev = li.previousElementSibling;
+  if (!prev) return;
+  if (isList(prev)) { prev.append(li); return; }
+  const nl = document.createElement(li.parentNode.tagName);
+  li.before(nl);
+  nl.append(li);
+}
+// Shift+Tab で 1 段戻す。いちばん外側の段なら箇条書きから外す
+function outdentItem(li, tx) {
+  const p = li.parentNode, outer = p.parentNode;
+  if (outer === tx || !(isList(outer) || outer.nodeName === 'LI')) { unlistItems(p, new Set([li])); return; }
+  const rest = [];
+  for (let n = li.nextSibling; n; n = n.nextSibling) rest.push(n);
+  p.after(li);
+  if (rest.length) { const tail = cloneList(p); tail.append(...rest); li.after(tail); }
+  if (!p.children.length) p.remove();
+}
+
 function setList(id) {
   const cur = editingTx();
   if (!cur) return;
@@ -649,51 +756,37 @@ function setList(id) {
     const m = Math.min(...all.map(depth));
     return all.filter((l) => depth(l) === m);
   };
-  const spec = LISTS.find((l) => l.id === id);
+  // 項目は作り直さず移すだけなので、文字の位置で選択範囲を戻せる
+  const keep = [sel.anchorNode, sel.anchorOffset, sel.focusNode, sel.focusOffset];
+  const whole = sel.getRangeAt(0).toString().trim() === tx.textContent.trim();
+  const r = sel.getRangeAt(0).cloneRange();
   if (id === 'none') {
-    const own = sameList(), lists = own ? [own] : inRange();
-    // 入れ子の内側から順に、項目を普通の段落へ戻す。戻した段落は選んだままにして、続けて別の記号を掛けられるようにする
-    const made = [], whole = sel.rangeCount && sel.getRangeAt(0).toString().trim() === tx.textContent.trim();
-    for (const l of lists.reverse()) {
-      if (!l.isConnected) continue;
-      for (const c of [...l.childNodes]) {
-        if (c.nodeName === 'LI') { const d = document.createElement('div'); while (c.firstChild) d.append(c.firstChild); l.before(d); c.remove(); made.push(d); }
-        else l.before(c);
-      }
-      l.remove();
-    }
-    const live = made.filter((d) => d.isConnected);
-    if (whole || live.length) {
-      const rr = document.createRange();
-      if (whole) rr.selectNodeContents(tx);
-      else {
-        live.sort((p, q) => (p.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
-        rr.setStartBefore(live[0]); rr.setEndAfter(live[live.length - 1]);
-      }
-      sel.removeAllRanges(); sel.addRange(rr);
-    }
+    // 選んだ項目（カーソルなら、その行）だけを外す。入れ子の内側から順に処理する
+    const own = sameList(), lists = (own ? [own] : inRange()).sort((a, b) => depth(b) - depth(a));
+    // 範囲は要素を動かすと縮むので、先に全部の対象を決めてから動かす
+    const jobs = lists.map((l) => [l, new Set([...l.children].filter((c) => c.nodeName === 'LI' && rangeHits(r, c)))]);
+    for (const [l, picked] of jobs) if (picked.size && l.isConnected) unlistItems(l, picked);
   } else {
-    const tag = spec.ol ? 'OL' : 'UL';
-    let targets = levelLists();
-    if (!targets.length) {
-      document.execCommand(spec.ol ? 'insertOrderedList' : 'insertUnorderedList');
-      targets = levelLists();
-    }
-    // 番号と記号の切り替えは要素を差し替えて行う。execCommand だと入れ子の段まで巻き込むため
-    const keep = [sel.anchorNode, sel.anchorOffset, sel.focusNode, sel.focusOffset];
-    const whole = sel.getRangeAt(0).toString().trim() === tx.textContent.trim();
+    const spec = LISTS.find((l) => l.id === id), tag = spec.ol ? 'OL' : 'UL', cls = 'mf-l-' + id;
+    // 範囲は要素を動かすと縮むので、記号を替える箇条書きを先に決めておく
+    const targets = levelLists();
+    // 箇条書きでない行が選ばれていれば、それを箇条書きにする（既存の箇条書きはそのまま移すだけ）
+    listLines(tx, r, tag, cls);
+    // 選択範囲にかかっていた箇条書きは、その段の記号を替える。番号と記号の切り替えは要素を差し替える
     for (let l of targets) {
+      if (!l.isConnected) continue;
       if (l.tagName !== tag) {
         const n = document.createElement(tag);
-        while (l.firstChild) n.append(l.firstChild);
+        n.append(...l.childNodes);
         l.replaceWith(n);
         l = n;
       }
-      l.className = 'mf-l-' + id;
+      l.className = cls;
     }
-    if (whole) { const rr = document.createRange(); rr.selectNodeContents(tx); sel.removeAllRanges(); sel.addRange(rr); }
-    else if (keep[0] && keep[0].isConnected && keep[2] && keep[2].isConnected) sel.setBaseAndExtent(...keep);
+    mergeLists(tx);
   }
+  if (whole) { const rr = document.createRange(); rr.selectNodeContents(tx); sel.removeAllRanges(); sel.addRange(rr); }
+  else if (keep[0] && keep[0].isConnected && keep[2] && keep[2].isConnected && tx.contains(keep[0]) && tx.contains(keep[2])) sel.setBaseAndExtent(...keep);
   el.html = tx.innerHTML;
   touch();
 }
@@ -962,12 +1055,20 @@ pageEl.addEventListener('click', (e) => { if (e.target.closest('a')) e.preventDe
 // 箇条書きの中では Tab で 1 段下げ、Shift+Tab で戻す
 pageEl.addEventListener('keydown', (e) => {
   if (e.key !== 'Tab' || !state.editing) return;
-  const n = getSelection().anchorNode, li = n && (n.nodeType === 1 ? n : n.parentNode).closest('li');
-  if (!li) return;
+  const sel = getSelection(), el = findEl(state.editing), tx = nodes.get(el.id).firstElementChild;
+  if (!sel.rangeCount) return;
+  const r = sel.getRangeAt(0).cloneRange(), a = sel.anchorNode, own = a && (a.nodeType === 1 ? a : a.parentNode).closest('li');
+  // 選んだ項目（カーソルなら、その行）。入れ子の項目を含む項目は除き、いちばん内側だけを動かす
+  let items = [...tx.querySelectorAll('li')].filter((li) => rangeHits(r, li));
+  if (r.collapsed && own && tx.contains(own)) items = [own];
+  items = items.filter((li) => !items.some((o) => o !== li && li.contains(o)));
+  if (!items.length) return;
   e.preventDefault();
-  document.execCommand(e.shiftKey ? 'outdent' : 'indent');
-  const el = findEl(state.editing);
-  el.html = nodes.get(el.id).firstElementChild.innerHTML;
+  const keep = [sel.anchorNode, sel.anchorOffset, sel.focusNode, sel.focusOffset];
+  if (e.shiftKey) items.slice().reverse().forEach((li) => outdentItem(li, tx));
+  else items.forEach(indentItem);
+  if (keep[0].isConnected && keep[2].isConnected) sel.setBaseAndExtent(...keep);
+  el.html = tx.innerHTML;
   touch();
 });
 
