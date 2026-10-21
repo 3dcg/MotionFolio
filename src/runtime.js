@@ -186,6 +186,8 @@ export class Viewer {
     // BlenderBook 書き出しのアドオンが、焼き込む前のキー位置と fps を extras に同梱している
     const defs = (gltf.parser && gltf.parser.json.animations) || [];
     this.meta = this.clips.map((c, i) => readMeta(defs[i]));
+    // fps を同梱していない glb は、毎フレーム焼き込まれたサンプルの間隔から fps を求める
+    this.dataFps = this.clips.map(sampleFps);
     this.mixer = new THREE.AnimationMixer(root);
     const order = this.order();
     this._setClip(order.includes(this.o.clip) ? this.o.clip : order[0], true);
@@ -230,7 +232,7 @@ export class Viewer {
   // fps を 0（自動）にしていれば、glb に同梱された fps を使う
   get fps() {
     const m = this.meta && this.meta[this.clipIdx];
-    return this.o.fps > 0 ? this.o.fps : (m && m.fps) || 30;
+    return this.o.fps > 0 ? this.o.fps : (m && m.fps) || (this.dataFps && this.dataFps[this.clipIdx]) || 30;
   }
 
   // 著者が並べ替え・非表示にしたクリップの順番（元の番号の配列）
@@ -647,6 +649,15 @@ function loopSeam(clip) {
     interval = (t[n - 1] - t[0]) / (n - 1);
   }
   return open ? interval : 0;
+}
+
+function sampleFps(clip) {
+  for (const tr of clip.tracks) {
+    if (!isBaked(tr)) continue;
+    const t = tr.times, f = (t.length - 1) / (t[t.length - 1] - t[0]), r = Math.round(f);
+    if (r >= 1 && r <= 240 && Math.abs(f - r) < r * 0.01) return r;
+  }
+  return 0;
 }
 
 const bufCache = new Map();

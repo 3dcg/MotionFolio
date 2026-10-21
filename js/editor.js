@@ -1370,7 +1370,11 @@ function modelPanel(el) {
     const src = { meta: 'glb に同梱された元のキー位置', estimated: '値の変化から推定（全フレームが焼き込まれた glb）', tracks: 'glb に記録されたキー' }[v.keySource];
     if (src) rows.push(hint(`キーの印：${src}、${v.keys.length} 個`));
   }
-  const fileFps = v && v.meta[v.clipIdx] && v.meta[v.clipIdx].fps;
+  const fileFps = v && ((v.meta[v.clipIdx] && v.meta[v.clipIdx].fps) || (v.dataFps && v.dataFps[v.clipIdx]));
+  // fps を手で決めていて glb の fps と違うと、フレーム番号が Blender とずれる
+  if (fileFps && el.fps > 0 && el.fps !== fileFps) {
+    rows.push(hint(`この glb は ${fileFps} fps です。fps を「自動」にすると、フレーム番号が Blender と揃います（いまは ${el.fps} fps で数えています）。`));
+  }
   return [
     sec('アニメーション',
       hint(a ? a.name : ''),
@@ -1548,14 +1552,25 @@ async function openProject(file) {
     assets.set(a.id, rec);
     idb.put('assets', a.id, { id: a.id, name: a.name, type: a.type, mime: a.mime, blob });
   }
-  state.doc = data.doc;
+  state.doc = migrate(data.doc);
   posters = data.posters || {};
   refreshAll(); resetHistory();
   toast(`${file.name} を開きました`);
 }
 
+// 古い書類を今の形に揃える。
+// v2: fps の初期値を 30 から「自動」(0) に変えたので、以前に 30 のまま置いた 3D を自動にする。
+// 30 fps の glb は自動でも 30 になるので見え方は変わらず、24 fps の glb はフレーム番号が Blender と揃う
+function migrate(doc) {
+  if ((doc.v || 1) < 2) {
+    for (const pg of doc.pages) for (const el of pg.els) if (el.type === 'model' && el.fps === 30) el.fps = 0;
+    doc.v = 2;
+  }
+  return doc;
+}
+
 function blankDoc() {
-  return { title: '名称未設定', w: 794, h: 1123, viewBg: '#e9e9ec', flow: 'scroll', pages: [{ id: uid(), bg: '#ffffff', els: [] }] };
+  return { v: 2, title: '名称未設定', w: 794, h: 1123, viewBg: '#e9e9ec', flow: 'scroll', pages: [{ id: uid(), bg: '#ffffff', els: [] }] };
 }
 async function newDoc() {
   if (!confirm('現在の書類を閉じて、新しい書類を作りますか？\n保存していない変更は失われます。')) return;
@@ -1981,7 +1996,7 @@ async function init() {
   const saved = await idb.get('kv', 'doc');
   if (saved && saved.doc && saved.doc.pages && saved.doc.pages.length) {
     for (const a of (await idb.all('assets')) || []) assets.set(a.id, { ...a, url: URL.createObjectURL(a.blob) });
-    state.doc = saved.doc;
+    state.doc = migrate(saved.doc);
     posters = saved.posters || {};
     state.pageIdx = clamp(saved.pageIdx || 0, 0, state.doc.pages.length - 1);
   } else welcomeDoc();
@@ -1991,5 +2006,5 @@ async function init() {
 }
 init();
 
-window.MotionFolio = { state, assets, buildHTML };
+window.MotionFolio = { state, assets, buildHTML, migrate };
 })();
