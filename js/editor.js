@@ -197,7 +197,7 @@ function modelStyle(el) {
 }
 function modelOpts(el) {
   const { asset, clip, autoplay, loop, speed, controls, grid, skeleton, wire, autoRotate, exposure, fps, time, cam, bg } = el;
-  return { asset, clip, autoplay, loop, speed, controls, grid, skeleton, wire, autoRotate, exposure, fps, time, cam, bg, keys: el.keys !== false, order: el.order || null };
+  return { asset, clip, autoplay, loop, speed, controls, grid, skeleton, wire, autoRotate, exposure, fps, time, cam, bg, keys: el.keys !== false, order: el.order || null, endFrame: el.endFrame || 0 };
 }
 function shapeHTML(el) {
   const sh = el.shadow ? `box-shadow:${SHADOW};` : '';
@@ -1552,6 +1552,22 @@ function clipList(el, names) {
   return h('div', { class: 'clips' }, order.map((i, pos) => item(i, pos)), [...Array(n).keys()].filter((i) => !order.includes(i)).map((i) => item(i, -1)));
 }
 
+// 終了フレーム。空欄なら書き出されたデータの最後まで（自動の値を薄く表示する）
+function endFrameInput(el, v) {
+  const m = v && v.meta[v.clipIdx], org = (m && m.frameOrigin) || 0;
+  const auto = v ? Math.round(v.dur * v.fps) + org : null;
+  const i = h('input', { type: 'number', min: 1, step: 1, placeholder: auto != null ? `自動（${auto}）` : '自動' });
+  i.value = el.endFrame > 0 ? el.endFrame : '';
+  i.addEventListener('change', () => {
+    const n = Math.round(+i.value);
+    el.endFrame = i.value === '' || !(n > 0) ? 0 : n;
+    if (!el.endFrame) i.value = '';
+    touch(); commit();
+    setTimeout(() => { const r = viewers.get(el.id); if (r) snapPoster(el.id); }, 100);
+  });
+  return i;
+}
+
 function modelPanel(el) {
   if (!el.asset) return [sec('アニメーション', hint('枠に glb をドロップするか、ダブルクリックして選びます。'),
     row('', C.btn('glb を選ぶ…', () => pickFiles('#fileGlb', (f) => fillModel(el, f[0])))))];
@@ -1578,6 +1594,7 @@ function modelPanel(el) {
       row('速度', C.sel('speed', [[0.1, '0.1×'], [0.25, '0.25×'], [0.5, '0.5×'], [1, '1×'], [2, '2×']], { num: true })),
       row('fps', C.sel('fps', [[0, `自動（${fileFps || 30} fps）`], [12, '12 fps'], [24, '24 fps'], [30, '30 fps'], [60, '60 fps']], { num: true })),
       row('開始（秒）', C.num('time', { min: 0, step: 0.01 })),
+      row('終了フレーム', endFrameInput(el, v)),
       hint('自動再生を切ると、開始位置のポーズで止まった図になります。再生バーを動かして決められます。黄色の印が記録されているキーフレームで、再生バーの ◀◆ ◆▶ ボタンで前後の印へ移動します。Shift を押しながらだと 1 フレームずつ動きます。')),
     sec('表示',
       row('', C.check('controls', '再生バー'), C.check('keys', 'キーフレーム')),

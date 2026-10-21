@@ -84,7 +84,7 @@ function tick(now) {
 const DEFAULTS = {
   bg: '', clip: 0, autoplay: true, loop: true, speed: 1, controls: true, grid: true,
   skeleton: false, wire: false, autoRotate: false, exposure: 1, fps: 30, time: 0,
-  cam: null, interactive: true, keys: true, order: null,
+  cam: null, interactive: true, keys: true, order: null, endFrame: 0,
 };
 
 export class Viewer {
@@ -260,14 +260,27 @@ export class Viewer {
     this.t0 = Number.isFinite(lo) ? Math.min(lo, this.dur) : 0;
     this.t1 = this.dur;
     // 最後のコマが最初のコマの 1 つ前に当たる周期アニメーションは、ループ時にもう 1 コマかけて最初へつなぐ
-    this.seam = loopSeam(clip);
-    if (this.seam) {
+    this.seamAuto = loopSeam(clip);
+    if (this.seamAuto) {
       this.seamClips = this.seamClips || [];
       this.actionB = this.mixer.clipAction(this.seamClips[i] || (this.seamClips[i] = clip.clone()));
       this.actionB.play();
     }
+    this._applyEnd();
     this.t = this._clamp(this.t);
     this._pose();
+  }
+
+  // 終了フレームを決めていれば、そこで再生を終える（0 なら書き出されたデータの最後まで）。
+  // 途中で終えるときは、周期アニメーションのつなぎ目は使わずに最初へ戻る
+  _applyEnd() {
+    const e = this.o.endFrame, m = this.meta && this.meta[this.clipIdx], org = (m && m.frameOrigin) || 0;
+    this.t1 = this.dur;
+    if (e > 0) {
+      const t = (e - org) / this.fps;
+      if (t > this.t0 + 1e-6) this.t1 = Math.min(this.dur, t);
+    }
+    this.seam = this.t1 < this.dur - 1e-6 ? 0 : this.seamAuto;
   }
 
   _clamp(t) { return Math.max(this.t0 || 0, Math.min(this.t1 ?? this.dur, t)); }
@@ -340,7 +353,8 @@ export class Viewer {
       const order = this.order();
       if (!order.includes(this.clipIdx)) { this.t = 0; this._setClip(order[0]); }
     }
-    if (o.fps !== p.fps || o.keys !== p.keys || JSON.stringify(o.order) !== JSON.stringify(p.order)) this._fillBar();
+    if (o.endFrame !== p.endFrame || o.fps !== p.fps) { this._applyEnd(); this.t = this._clamp(this.t); this._pose(); }
+    if (o.fps !== p.fps || o.keys !== p.keys || o.endFrame !== p.endFrame || JSON.stringify(o.order) !== JSON.stringify(p.order)) this._fillBar();
     this._applyLook();
     this._syncBar();
   }
@@ -451,10 +465,12 @@ export class Viewer {
     if (t !== this.t) { this.t = t; this._pose(); }
     if (this.o.keys === false || !this.dur) { this.marks.innerHTML = ''; return; }
     const span = this.t1 - this.t0 || 1, pos = (t) => (t - this.t0) / span;
+    // 終了フレームより後のキーは印を出さない
+    const keys = this.keys.filter((t) => t <= this.t1 + 1e-6);
     // 多いときは菱形だと潰れて読めないので細い線に切り替える
-    this.marks.innerHTML = this.keys.length <= 150
-      ? this.keys.map((t) => `<i style="left:${(pos(t) * 100).toFixed(3)}%"></i>`).join('')
-      : `<svg viewBox="0 0 1000 10" preserveAspectRatio="none"><path vector-effect="non-scaling-stroke" d="${this.keys.map((t) => `M${(pos(t) * 1000).toFixed(1)} 0V10`).join('')}"/></svg>`;
+    this.marks.innerHTML = keys.length <= 150
+      ? keys.map((t) => `<i style="left:${(pos(t) * 100).toFixed(3)}%"></i>`).join('')
+      : `<svg viewBox="0 0 1000 10" preserveAspectRatio="none"><path vector-effect="non-scaling-stroke" d="${keys.map((t) => `M${(pos(t) * 1000).toFixed(1)} 0V10`).join('')}"/></svg>`;
   }
 
   _syncBar() {
