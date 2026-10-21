@@ -58,8 +58,8 @@ const IC = {
 };
 
 const FONTS = {
-  sans: { n: 'ゴシック（システム）', css: '"Hiragino Sans","Yu Gothic UI","Yu Gothic","Meiryo",sans-serif' },
-  serif: { n: '明朝（システム）', css: '"Hiragino Mincho ProN","Yu Mincho","YuMincho",serif' },
+  sans: { n: 'ゴシック（端末のフォント）', sys: 'notosans', css: '"Hiragino Sans","Yu Gothic UI","Yu Gothic","Meiryo",sans-serif' },
+  serif: { n: '明朝（端末のフォント）', sys: 'notoserif', css: '"Hiragino Mincho ProN","Yu Mincho","YuMincho",serif' },
   notosans: { n: 'Noto Sans JP', css: '"Noto Sans JP","Yu Gothic UI",sans-serif', g: 'Noto+Sans+JP:wght@400;500;700;900' },
   notoserif: { n: 'Noto Serif JP', css: '"Noto Serif JP","Yu Mincho",serif', g: 'Noto+Serif+JP:wght@400;500;700;900' },
   zenkaku: { n: 'Zen Kaku Gothic New', css: '"Zen Kaku Gothic New","Yu Gothic UI",sans-serif', g: 'Zen+Kaku+Gothic+New:wght@400;500;700;900' },
@@ -71,7 +71,7 @@ const FONTS = {
 const fontsHref = (keys) => 'https://fonts.googleapis.com/css2?' + keys.map((k) => 'family=' + FONTS[k].g).join('&') + '&display=swap';
 
 const INK = '#1d1d1f';
-const TEXT_BASE = { font: 'sans', color: INK, bg: '', pad: 0, radius: 0, ls: 0, align: 'left' };
+const TEXT_BASE = { font: 'notosans', color: INK, bg: '', pad: 0, radius: 0, ls: 0, align: 'left' };
 const TEXT_PRESETS = {
   title: { label: 'タイトル', size: 52, weight: 900, lh: 1.25, ls: 0.01 },
   heading: { label: '見出し', size: 30, weight: 700, lh: 1.35 },
@@ -1444,7 +1444,7 @@ function docPanel() {
   const reflowChk = h('label', { class: 'chk grow' }, rc, 'スマホでは 1 段組みで表示');
   flow.addEventListener('change', () => { d.flow = flow.value; scheduleSave(); commit(); insp(); });
   // 書き出す範囲。プレビューもこの範囲で作る
-  const n = d.pages.length, [rf, rt] = exportRange();
+  const n = d.pages.length, [rf, rt] = exportRange(), sysCount = systemFontEls().length;
   const setRange = (f, t) => {
     d.range = f <= 1 && t >= n ? null : { from: f, to: t };
     scheduleSave(); commit(); insp();
@@ -1468,12 +1468,24 @@ function docPanel() {
     sec('書き出した HTML の読み方', row('形式', flow), row('背景', vbg), row('', reflowChk),
       hint('スマホでは紙面を縮めず、文字を原寸のまま上から読む順に 1 段で並べ直します。段組みは左の段から読みます。図形は表示しません。「プレビュー」→「スマホで見る」で確かめられます。'),
       hint({ paged: '1 ページずつ表示し、矢印キーやボタンでめくります。', scroll: 'ページを縦に並べ、スクロールで読み進めます。', seamless: 'ページの切れ目をなくし、1 枚の長い紙面として読めます。' }[d.flow || 'scroll'])),
+    sysCount ? sec('フォント', h('div', { class: 'warn' },
+      hint(`端末のフォントを使っているテキストが ${sysCount} 個あります。Windows と Mac・iPhone で文字の幅が違うため、改行の位置が変わってはみ出すことがあります。`),
+      C.btn('すべて Web フォントに替える', () => {
+        if (confirm(`端末のフォントのテキスト ${sysCount} 個を、ゴシックは Noto Sans JP、明朝は Noto Serif JP に替えます。\n文字の幅が変わるので、改行の位置を確かめてください（取り消しで戻せます）。`)) toWebFonts(systemFontEls());
+      }))) : null,
     sec(`ページ ${state.pageIdx + 1}`, row('背景色', h('span', { class: 'color' }, bg))),
     sec('使い方',
       hint('ツールバーからテキスト・図形・画像・3D を追加します。画像と glb はドラッグ＆ドロップでも入れられます。'),
       hint('テキストはダブルクリックで編集、3D はダブルクリックで視点とポーズを決めます。'),
       hint('Shift で縦横比や移動方向を固定、Alt でスナップを一時的に切ります。')),
   ];
+}
+
+// 端末のフォント（Windows は游ゴシック、Mac・iPhone はヒラギノ）を使っているテキスト
+const systemFontEls = () => state.doc.pages.flatMap((pg) => pg.els.filter((e) => e.type === 'text' && FONTS[e.font] && FONTS[e.font].sys));
+function toWebFonts(els) {
+  for (const t of els) t.font = FONTS[t.font].sys;
+  touch(); commit(); insp();
 }
 
 function textPanel(el) {
@@ -1486,7 +1498,10 @@ function textPanel(el) {
   return [
     sec('スタイル', presets),
     sec('文字',
-      row('フォント', C.sel('font', Object.entries(FONTS).map(([k, f]) => [k, f.n]))),
+      row('フォント', C.sel('font', Object.entries(FONTS).map(([k, f]) => [k, f.n]), { after: () => insp() })),
+      FONTS[el.font] && FONTS[el.font].sys ? h('div', { class: 'warn' },
+        hint('端末のフォントは、Windows（游ゴシック・游明朝）と Mac・iPhone（ヒラギノ）で文字の幅が違います。改行の位置が変わって、はみ出すことがあります。'),
+        C.btn(`${FONTS[FONTS[el.font].sys].n} に替える`, () => toWebFonts(selEls().filter((t) => t.type === 'text' && FONTS[t.font] && FONTS[t.font].sys)))) : null,
       row('太さ', C.sel('weight', [[400, '標準'], [500, '中'], [700, '太字'], [900, '極太']], { num: true })),
       row('サイズ', C.num('size', { min: 6, max: 400 }), h('span', { class: 'color' }, C.color('color'))),
       row('装飾', h('div', { class: 'btns' },
@@ -1640,7 +1655,7 @@ function insp() {
   const box = $('#inspector');
   box.innerHTML = '';
   const sel = selEls();
-  if (!sel.length) { box.append(...docPanel()); return; }
+  if (!sel.length) { box.append(...docPanel().filter(Boolean)); return; }
   const el = sel[0], same = sel.every((e) => e.type === el.type);
   box.append(h('div', { class: 'insp-head' }, sel.length > 1 ? `${sel.length} 個のオブジェクト` : TYPE_NAME[el.type]));
   if (same) {

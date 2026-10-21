@@ -217,3 +217,6 @@ button, select, input { font: inherit; color: inherit; }
 }
 .tb[hidden] { display: none; }
 #purgeBtn svg { color: #d70015; }
+.warn { background: #fff6e5; border: 1px solid #ffd99a; border-radius: 8px; padding: 6px 8px 8px; margin: 4px 0 6px; }
+.warn .hint { color: #8a5a00; margin-top: 0; }
+.warn .btn { width: 100%; margin-top: 4px; }
