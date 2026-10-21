@@ -109,10 +109,26 @@ const LIST_MARK = {
   circled: 'content:counter(mf,mf-circled);font-weight:400',
   paren: 'content:"(" counter(mf) ")";text-align:left;font-weight:400',
   step: 'content:counter(mf);font-size:.72em;width:1.6em;height:1.6em;line-height:1.6em;margin-left:-2.78em;margin-right:1.18em;border-radius:50%;background:#0071e3;color:#fff;vertical-align:.12em',
+  // 入れ子の段で自動的に使う記号（ボタンには出さない）
+  circle: 'content:"◦"',
+  roman: 'content:counter(mf,lower-roman) ".";text-align:left;font-weight:400',
 };
-const LIST_CSS = Object.entries(LIST_MARK).map(([id, css]) =>
-  `.mf-l-${id}>li::before,.mf-l-${id} :is(ul,ol):not([class])>li::before{${css}}`).join('\n') +
-  '\n.mf-tx .mf-l-step,.mf-tx .mf-l-step :is(ul,ol):not([class]){padding-left:2em}';
+// 記号を選んでいない入れ子の段は、外側の段の種類と深さで記号を変える。[2 段目, 3 段目以降]
+const LIST_NEST = {
+  dot: ['dash', 'circle'], disc: ['circle', 'square'], dash: ['circle', 'square'], square: ['circle', 'dash'],
+  check: ['dash', 'circle'], arrow: ['dash', 'circle'],
+  num: ['alpha', 'roman'], alpha: ['roman', 'dash'], circled: ['alpha', 'roman'], paren: ['alpha', 'roman'], step: ['alpha', 'roman'],
+};
+// 段は「箇条書きの直下」か「項目の中」に入る。どちらの形でも、いちばん近い記号つきの段から数える
+const NEST = ['>:is(ul,ol):not([class])', '>li>:is(ul,ol):not([class])'];
+const LIST_CSS = Object.entries(LIST_MARK).map(([id, css]) => `.mf-l-${id}>li::before{${css}}`).join('\n') + '\n' +
+  Object.entries(LIST_NEST).map(([id, [l2, l3]]) => {
+    const lv2 = NEST.map((a) => `.mf-l-${id}${a}>li::before`);
+    const lv3 = NEST.flatMap((a) => NEST.map((b) => `.mf-l-${id}${a}${b}>li::before`));
+    const deeper = `.mf-l-${id} :is(ul,ol):not([class]) :is(ul,ol):not([class]) :is(ul,ol):not([class])>li::before`;
+    return `${lv2.join(',')}{${LIST_MARK[l2]}}\n${[...lv3, deeper].join(',')}{${LIST_MARK[l3]}}`;
+  }).join('\n') +
+  '\n.mf-tx .mf-l-step{padding-left:2em}';
 // エディターと書き出し HTML で共通のスタイル
 const BASE_CSS = `
 .mf-page{position:relative;overflow:hidden;background:#fff}
