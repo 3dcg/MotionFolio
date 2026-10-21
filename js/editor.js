@@ -1045,10 +1045,59 @@ stage.addEventListener('click', (e) => {
   } else lastTap = { id: key, t: now };
 });
 
+// ブラウザが入力の途中で箇条書きを作り直すと、記号のクラスが落ちて記号が消える。
+// 入力の直前にカーソルのある箇条書きのクラスを覚えておき、クラスのない外側の段に付け直す
+let pendingListClass = '';
+pageEl.addEventListener('beforeinput', () => {
+  const a = getSelection().anchorNode, e = a && (a.nodeType === 1 ? a : a.parentNode);
+  let l = e && e.closest('ul,ol');
+  while (l && l.parentNode.closest('ul,ol')) l = l.parentNode.closest('ul,ol');
+  pendingListClass = (l && l.className) || '';
+});
+function repairLists(tx) {
+  for (const l of tx.querySelectorAll('ul,ol')) {
+    if (l.className) continue;
+    const outer = l.parentNode.closest('ul,ol');
+    if (outer && tx.contains(outer)) continue;
+    const sib = [l.previousElementSibling, l.nextElementSibling].find((x) => isList(x) && x.tagName === l.tagName && x.className);
+    const fromKeep = pendingListClass && (pendingListClass.match(/mf-l-(\w+)/) || [])[1];
+    const keepOk = fromKeep && !!LISTS.find((x) => x.id === fromKeep && !!x.ol === (l.tagName === 'OL'));
+    l.className = sib ? sib.className : keepOk ? pendingListClass : l.tagName === 'OL' ? 'mf-l-num' : 'mf-l-disc';
+  }
+}
 pageEl.addEventListener('input', () => {
   const el = state.editing && findEl(state.editing);
   if (!el) return;
-  el.html = nodes.get(el.id).firstElementChild.innerHTML;
+  const tx = nodes.get(el.id).firstElementChild;
+  repairLists(tx);
+  el.html = tx.innerHTML;
+  touch();
+});
+// 項目の先頭での BackSpace と、空の項目での Enter は、1 段戻す（いちばん外側なら普通の段落にする）。
+// ブラウザ任せにすると箇条書きごと作り直されて崩れる
+pageEl.addEventListener('keydown', (e) => {
+  if (!state.editing || (e.key !== 'Backspace' && e.key !== 'Enter') || e.shiftKey || e.isComposing) return;
+  const sel = getSelection();
+  if (!sel.rangeCount || !sel.isCollapsed) return;
+  const el = findEl(state.editing), tx = nodes.get(el.id).firstElementChild;
+  const a = sel.anchorNode, li = a && (a.nodeType === 1 ? a : a.parentNode).closest('li');
+  if (!li || !tx.contains(li)) return;
+  const pre = document.createRange();
+  pre.setStart(li, 0); pre.setEnd(sel.anchorNode, sel.anchorOffset);
+  const atStart = !pre.toString().replace(/​/g, '') && !pre.cloneContents().querySelector('img');
+  const empty = !li.textContent.replace(/​/g, '') && !li.querySelector('img');
+  if (e.key === 'Enter' ? !empty : !atStart) return;
+  e.preventDefault();
+  const first = li.firstChild, keepText = a.nodeType === 3 ? [a, sel.anchorOffset] : null;
+  outdentItem(li, tx);
+  const r = document.createRange();
+  if (keepText && keepText[0].isConnected) r.setStart(...keepText);
+  else if (first && first.isConnected) r.setStartBefore(first);
+  else if (li.isConnected) r.setStart(li, 0);
+  else r.selectNodeContents(tx);
+  r.collapse(true);
+  sel.removeAllRanges(); sel.addRange(r);
+  el.html = tx.innerHTML;
   touch();
 });
 pageEl.addEventListener('click', (e) => { if (e.target.closest('a')) e.preventDefault(); });
