@@ -2037,12 +2037,13 @@ var sx=null,sy=0;addEventListener('touchstart',function(e){sx=e.touches.length==
 addEventListener('touchend',function(e){if(sx===null||lb)return;var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;sx=null;if(Math.abs(dx)>60&&Math.abs(dy)<Math.abs(dx)*.6)show(cur+(dx<0?1:-1))},{passive:true})}
 else{var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){cur=wraps.indexOf(e.target);label(cur)}})},{rootMargin:'-45% 0px -45% 0px'});
 wraps.forEach(function(w){io.observe(w)})}
-var lb=null,big=null;function closeLb(){if(!lb)return;if(big){big.host.classList.remove('mfv-big');big.parent.insertBefore(big.host,big.next);big=null}lb.remove();lb=null;document.body.style.overflow=''}
-var down=null;document.addEventListener('pointerdown',function(e){var v=e.target.closest&&e.target.closest('.mfv-view');down=v&&!lb&&e.button===0?{x:e.clientX,y:e.clientY,t:Date.now(),host:v.closest('.mfv')}:null},true);
-document.addEventListener('pointerup',function(e){var d=down;down=null;if(!d||lb||Math.hypot(e.clientX-d.x,e.clientY-d.y)>5||Date.now()-d.t>400)return;
+var lb=null,big=null;function closeLb(){if(!lb)return;if(big){big.host.classList.remove('mfv-big');big.host.title='クリックで拡大表示';big.parent.insertBefore(big.host,big.next);big=null}lb.remove();lb=null;document.body.style.overflow=''}
+var down=null;document.addEventListener('pointerdown',function(e){var v=e.target.closest&&e.target.closest('.mfv-view');down=v&&(!lb||big)&&e.button===0?{x:e.clientX,y:e.clientY,t:Date.now(),host:v.closest('.mfv')}:null},true);
+document.addEventListener('pointerup',function(e){var d=down;down=null;if(!d||Math.hypot(e.clientX-d.x,e.clientY-d.y)>5||Date.now()-d.t>400)return;
+if(big){if(d.host===big.host)closeLb();return}if(lb)return;
 var h=d.host;big={host:h,parent:h.parentNode,next:h.nextSibling};lb=document.createElement('div');lb.className='mf-lb mf-lb3d';
 lb.innerHTML='<div class="mf-lb-frame"></div><button class="mf-lb-x" type="button" aria-label="閉じる">×</button>';
-lb.firstChild.appendChild(h);h.classList.add('mfv-big');lb.onclick=function(ev){if(ev.target===lb||ev.target.closest('.mf-lb-x'))closeLb()};
+lb.firstChild.appendChild(h);h.classList.add('mfv-big');h.title='クリックで閉じる（ドラッグで回転）';lb.onclick=function(ev){if(ev.target===lb||ev.target.closest('.mf-lb-x'))closeLb()};
 document.body.appendChild(lb);document.body.style.overflow='hidden';requestAnimationFrame(function(){if(lb)lb.classList.add('on')})},true);
 document.querySelectorAll('.mfv').forEach(function(h){h.title='クリックで拡大表示'});
 document.addEventListener('click',function(e){var im=e.target.closest&&e.target.closest('.mf-image img');if(!im||lb)return;
