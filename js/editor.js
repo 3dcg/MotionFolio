@@ -596,11 +596,40 @@ const LISTS = [
   { id: 'paren', label: '(1)', title: 'かっこ数字', ol: true },
   { id: 'step', label: '<span class="list-step">1</span>', title: '手順バッジ', ol: true },
 ];
+// テキスト中の改行文字を <br> に置き換える。貼り付けた文章などは改行文字で行が分かれていて、
+// そのまま箇条書きにすると全体が 1 項目になり、記号が先頭の行にしか付かない。
+// 改行文字も <br> も 1 文字と数えて選択範囲の位置を覚え、置き換えた後に戻す
+function newlinesToBr(tx, sel) {
+  const nodes = [], walk = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT);
+  while (walk.nextNode()) if (walk.currentNode.data.includes('\n')) nodes.push(walk.currentNode);
+  if (!nodes.length) return;
+  const units = (frag) => frag.textContent.length + frag.querySelectorAll('br').length;
+  const offsetOf = (node, off) => { const r = document.createRange(); r.setStart(tx, 0); r.setEnd(node, off); return units(r.cloneContents()); };
+  const keep = sel.rangeCount ? [offsetOf(sel.anchorNode, sel.anchorOffset), offsetOf(sel.focusNode, sel.focusOffset)] : null;
+  for (const n of nodes) {
+    const frag = document.createDocumentFragment();
+    n.data.split('\n').forEach((part, i) => { if (i) frag.append(document.createElement('br')); if (part) frag.append(part); });
+    n.replaceWith(frag);
+  }
+  if (!keep) return;
+  const locate = (k) => {
+    const w = document.createTreeWalker(tx, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    while (w.nextNode()) {
+      const c = w.currentNode;
+      if (c.nodeType === 3) { if (k <= c.length) return [c, k]; k -= c.length; }
+      else if (c.nodeName === 'BR') { if (k === 0) return [c.parentNode, [...c.parentNode.childNodes].indexOf(c)]; k -= 1; }
+    }
+    return [tx, tx.childNodes.length];
+  };
+  sel.setBaseAndExtent(...locate(keep[0]), ...locate(keep[1]));
+}
+
 function setList(id) {
   const cur = editingTx();
   if (!cur) return;
   const { el, tx } = cur, sel = getSelection();
   if (!sel.rangeCount) return;
+  newlinesToBr(tx, sel);
   const ownOf = (n) => {
     const e = n && (n.nodeType === 1 ? n : n.parentNode), l = e && e.closest('ul,ol');
     return l && tx.contains(l) ? l : null;
@@ -1928,7 +1957,9 @@ window.addEventListener('drop', (e) => {
 document.addEventListener('paste', (e) => {
   if (state.editing) {
     e.preventDefault();
-    document.execCommand('insertText', false, e.clipboardData.getData('text/plain'));
+    // 改行は <br> にして入れる。改行文字のままだと、後で箇条書きにしたとき行が分かれない
+    const text = e.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
+    document.execCommand('insertHTML', false, esc(text).replace(/\n/g, '<br>'));
     return;
   }
   if (e.target.closest && e.target.closest('input,select,textarea')) return;
