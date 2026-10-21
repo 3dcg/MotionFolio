@@ -1495,11 +1495,45 @@ const idb = {
   get(store, key) { return this.tx(store, 'readonly', (s) => s.get(key)); },
   all(store) { return this.tx(store, 'readonly', (s) => s.getAll()); },
   clear(store) { return this.tx(store, 'readwrite', (s) => s.clear()); },
+  del(store, key) { return this.tx(store, 'readwrite', (s) => s.delete(key)); },
 };
 let saveT = 0;
 function scheduleSave() {
   clearTimeout(saveT);
-  saveT = setTimeout(() => idb.put('kv', 'doc', { doc: state.doc, posters, pageIdx: state.pageIdx }), 700);
+  saveT = setTimeout(() => { idb.put('kv', 'doc', { doc: state.doc, posters, pageIdx: state.pageIdx }); updatePurge(); }, 700);
+}
+
+// 消した要素の画像・glb は、取り消しで戻せるようにブラウザ内に残している。
+// 今の書類で使っていないものと、消した 3D の静止画をまとめて捨てられるようにする
+function unusedData() {
+  const used = usedAssets(), ids = new Set();
+  for (const pg of state.doc.pages) for (const el of pg.els) ids.add(el.id);
+  const files = [...assets.values()].filter((a) => !used.has(a.id));
+  const shots = Object.keys(posters).filter((id) => !ids.has(id));
+  const bytes = files.reduce((n, a) => n + ((a.blob && a.blob.size) || 0), 0) + shots.reduce((n, id) => n + posters[id].length, 0);
+  return { files, shots, bytes };
+}
+const fmtSize = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
+function updatePurge() {
+  const btn = $('#purgeBtn'), u = unusedData();
+  btn.hidden = !u.files.length && !u.shots.length;
+  btn.querySelector('.tb-l').textContent = `未使用 ${fmtSize(u.bytes)}`;
+  btn.title = `未使用のデータを削除：使われていない画像・glb ${u.files.length} 個と、消した 3D の静止画 ${u.shots.length} 枚`;
+}
+async function purgeUnused() {
+  const u = unusedData();
+  if (!u.files.length && !u.shots.length) return;
+  const what = [u.files.length && `画像・glb ${u.files.length} 個`, u.shots.length && `3D の静止画 ${u.shots.length} 枚`].filter(Boolean).join('、');
+  if (!confirm(`今の書類で使っていない ${what}（${fmtSize(u.bytes)}）を削除します。\n\n取り消し（Ctrl+Z）の履歴もここで消え、削除した要素は戻せなくなります。`)) return;
+  exitModes();
+  for (const a of u.files) { URL.revokeObjectURL(a.url); assets.delete(a.id); await idb.del('assets', a.id); }
+  for (const id of u.shots) delete posters[id];
+  clip = null;
+  resetHistory(); syncUndo();
+  clearTimeout(saveT);
+  await idb.put('kv', 'doc', { doc: state.doc, posters, pageIdx: state.pageIdx });
+  updatePurge();
+  toast(`${what}を削除しました`);
 }
 
 function usedAssets(pages = state.doc.pages) {
@@ -1908,6 +1942,7 @@ const ACT = {
 for (const b of $$('[data-ic]')) b.insertAdjacentHTML('afterbegin', IC[b.dataset.ic]);
 for (const b of $$('[data-act]')) b.addEventListener('click', () => ACT[b.dataset.act](b));
 // スマホでは右パネルを下から出すシートにしている。ボタンで開け閉めする
+$('#purgeBtn').addEventListener('click', purgeUnused);
 $('#inspToggle').addEventListener('click', (e) => {
   const open = document.body.classList.toggle('insp-open');
   e.currentTarget.textContent = open ? '閉じる' : '調整';

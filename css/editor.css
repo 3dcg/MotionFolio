@@ -215,3 +215,5 @@ button, select, input { font: inherit; color: inherit; }
   .btn { height: 32px; }
   .menu button { padding: 11px 12px; }
 }
+.tb[hidden] { display: none; }
+#purgeBtn svg { color: #d70015; }
