@@ -1733,6 +1733,15 @@ padding:28px max(20px,env(safe-area-inset-right)) 32px max(20px,env(safe-area-in
 .mf-reflow .mf-image,.mf-reflow .mf-model{width:min(100%,var(--w))!important;aspect-ratio:var(--ar);align-self:center}
 .mf-reflow .mf-model{min-height:240px}
 .mf-reflow .mf-vert{width:min(100%,var(--w))!important;height:var(--h)!important;align-self:center}
+.mf-image img{cursor:zoom-in}
+.mf-lb{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;box-sizing:border-box;
+padding:max(56px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
+background:rgba(0,0,0,.86);cursor:zoom-out;opacity:0;transition:opacity .2s}
+.mf-lb.on{opacity:1}
+.mf-lb img{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+.mf-lb-x{all:unset;position:fixed;top:max(10px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:40px;height:40px;border-radius:20px;
+display:grid;place-items:center;background:rgba(255,255,255,.16);color:#fff;font-size:24px;line-height:1;cursor:pointer}
+@media print{.mf-lb{display:none}}
 @page{size:${d.w}px ${d.h}px;margin:0}
 @media print{html{background:#fff}.mf-bar{display:none}.mf-doc{--s:1!important;padding:0;display:block;min-height:0}.mf-stack{display:block;box-shadow:none}.mf-wrap{display:block!important;box-shadow:none;break-after:page}}
 `;
@@ -1754,16 +1763,22 @@ function go(d){if(paged)show(cur+d);else{var t=wraps[Math.max(0,Math.min(wraps.l
 addEventListener('resize',layout);layout();
 document.querySelector('.mf-prev').onclick=function(){go(-1)};document.querySelector('.mf-next').onclick=function(){go(1)};
 if(paged){show((parseInt(location.hash.slice(2))||1)-1);
-addEventListener('keydown',function(e){if(/INPUT|SELECT/.test(e.target.tagName))return;var k=e.key;
+addEventListener('keydown',function(e){if(lb||/INPUT|SELECT/.test(e.target.tagName))return;var k=e.key;
 if(k==='ArrowRight'||k==='PageDown'||k===' '){e.preventDefault();show(cur+1)}else if(k==='ArrowLeft'||k==='PageUp'){e.preventDefault();show(cur-1)}else if(k==='Home')show(0);else if(k==='End')show(wraps.length-1)});
-var acc=0,lock=0,last=0;addEventListener('wheel',function(e){if(e.ctrlKey||(e.target.closest&&e.target.closest('.mfv-armed,select')))return;
+var acc=0,lock=0,last=0;addEventListener('wheel',function(e){if(lb||e.ctrlKey||(e.target.closest&&e.target.closest('.mfv-armed,select')))return;
 var now=Date.now(),dy=(e.deltaY||e.deltaX)*(e.deltaMode===1?33:e.deltaMode===2?400:1);if(now-last>250||dy*acc<0)acc=0;last=now;
 if(Math.abs(dy)>=50){show(cur+(dy>0?1:-1));acc=0;return}
 if(now<lock)return;acc+=dy;if(Math.abs(acc)>=120){show(cur+(acc>0?1:-1));acc=0;lock=now+160}},{capture:true,passive:true});
 var sx=null,sy=0;addEventListener('touchstart',function(e){sx=e.touches.length===1&&!e.target.closest('.mfv')?e.touches[0].clientX:null;sy=e.touches[0].clientY},{passive:true});
-addEventListener('touchend',function(e){if(sx===null)return;var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;sx=null;if(Math.abs(dx)>60&&Math.abs(dy)<Math.abs(dx)*.6)show(cur+(dx<0?1:-1))},{passive:true})}
+addEventListener('touchend',function(e){if(sx===null||lb)return;var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;sx=null;if(Math.abs(dx)>60&&Math.abs(dy)<Math.abs(dx)*.6)show(cur+(dx<0?1:-1))},{passive:true})}
 else{var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){cur=wraps.indexOf(e.target);label(cur)}})},{rootMargin:'-45% 0px -45% 0px'});
 wraps.forEach(function(w){io.observe(w)})}
+var lb=null;function closeLb(){if(!lb)return;lb.remove();lb=null;document.body.style.overflow=''}
+document.addEventListener('click',function(e){var im=e.target.closest&&e.target.closest('.mf-image img');if(!im||lb)return;
+lb=document.createElement('div');lb.className='mf-lb';lb.innerHTML='<img alt=""><button class="mf-lb-x" type="button" aria-label="閉じる">×</button>';
+lb.firstChild.src=im.src;lb.onclick=closeLb;document.body.appendChild(lb);document.body.style.overflow='hidden';
+requestAnimationFrame(function(){if(lb)lb.classList.add('on')})});
+addEventListener('keydown',function(e){if(lb&&e.key==='Escape'){e.preventDefault();closeLb()}});
 if(window.MFV)MFV.autoInit();})();`;
   const parts = [
     `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n<title>${esc(d.title)}</title>\n<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(READER_ICON)}">\n`,
