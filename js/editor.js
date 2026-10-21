@@ -2000,6 +2000,9 @@ padding:max(56px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 
 background:rgba(0,0,0,.86);cursor:zoom-out;opacity:0;transition:opacity .2s}
 .mf-lb.on{opacity:1}
 .mf-lb img{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+.mf-lb3d{cursor:default}
+.mf-lb-frame{width:min(1400px,100%);height:100%;border-radius:12px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+.mf-lb-frame>.mfv{width:100%!important;height:100%!important;border-radius:0!important;border:0!important;box-shadow:none!important}
 .mf-lb-x{all:unset;position:fixed;top:max(10px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:40px;height:40px;border-radius:20px;
 display:grid;place-items:center;background:rgba(255,255,255,.16);color:#fff;font-size:24px;line-height:1;cursor:pointer}
 @media print{.mf-lb{display:none}}
@@ -2034,7 +2037,14 @@ var sx=null,sy=0;addEventListener('touchstart',function(e){sx=e.touches.length==
 addEventListener('touchend',function(e){if(sx===null||lb)return;var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;sx=null;if(Math.abs(dx)>60&&Math.abs(dy)<Math.abs(dx)*.6)show(cur+(dx<0?1:-1))},{passive:true})}
 else{var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){cur=wraps.indexOf(e.target);label(cur)}})},{rootMargin:'-45% 0px -45% 0px'});
 wraps.forEach(function(w){io.observe(w)})}
-var lb=null;function closeLb(){if(!lb)return;lb.remove();lb=null;document.body.style.overflow=''}
+var lb=null,big=null;function closeLb(){if(!lb)return;if(big){big.host.classList.remove('mfv-big');big.parent.insertBefore(big.host,big.next);big=null}lb.remove();lb=null;document.body.style.overflow=''}
+var down=null;document.addEventListener('pointerdown',function(e){var v=e.target.closest&&e.target.closest('.mfv-view');down=v&&!lb&&e.button===0?{x:e.clientX,y:e.clientY,t:Date.now(),host:v.closest('.mfv')}:null},true);
+document.addEventListener('pointerup',function(e){var d=down;down=null;if(!d||lb||Math.hypot(e.clientX-d.x,e.clientY-d.y)>5||Date.now()-d.t>400)return;
+var h=d.host;big={host:h,parent:h.parentNode,next:h.nextSibling};lb=document.createElement('div');lb.className='mf-lb mf-lb3d';
+lb.innerHTML='<div class="mf-lb-frame"></div><button class="mf-lb-x" type="button" aria-label="閉じる">×</button>';
+lb.firstChild.appendChild(h);h.classList.add('mfv-big');lb.onclick=function(ev){if(ev.target===lb||ev.target.closest('.mf-lb-x'))closeLb()};
+document.body.appendChild(lb);document.body.style.overflow='hidden';requestAnimationFrame(function(){if(lb)lb.classList.add('on')})},true);
+document.querySelectorAll('.mfv').forEach(function(h){h.title='クリックで拡大表示'});
 document.addEventListener('click',function(e){var im=e.target.closest&&e.target.closest('.mf-image img');if(!im||lb)return;
 lb=document.createElement('div');lb.className='mf-lb';lb.innerHTML='<img alt=""><button class="mf-lb-x" type="button" aria-label="閉じる">×</button>';
 lb.firstChild.src=im.src;lb.onclick=closeLb;document.body.appendChild(lb);document.body.style.overflow='hidden';

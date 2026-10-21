@@ -272,15 +272,16 @@ export class Viewer {
   }
 
   // 終了フレームを決めていれば、そこで再生を終える（0 なら書き出されたデータの最後まで）。
-  // 途中で終えるときは、周期アニメーションのつなぎ目は使わずに最初へ戻る
+  // データの最後より後なら、最後のポーズのまま止めておく。
+  // 最後まで以外で終えるときは、周期アニメーションのつなぎ目は使わずに最初へ戻る
   _applyEnd() {
     const e = this.o.endFrame, m = this.meta && this.meta[this.clipIdx], org = (m && m.frameOrigin) || 0;
     this.t1 = this.dur;
     if (e > 0) {
       const t = (e - org) / this.fps;
-      if (t > this.t0 + 1e-6) this.t1 = Math.min(this.dur, t);
+      if (t > this.t0 + 1e-6) this.t1 = t;
     }
-    this.seam = this.t1 < this.dur - 1e-6 ? 0 : this.seamAuto;
+    this.seam = Math.abs(this.t1 - this.dur) > 1e-6 ? 0 : this.seamAuto;
   }
 
   _clamp(t) { return Math.max(this.t0 || 0, Math.min(this.t1 ?? this.dur, t)); }
@@ -292,7 +293,7 @@ export class Viewer {
       this.action.time = this.t1; this.action.setEffectiveWeight(1 - a);
       this.actionB.time = this.t0; this.actionB.setEffectiveWeight(a);
     } else {
-      this.action.time = this.t; this.action.setEffectiveWeight(1);
+      this.action.time = Math.min(this.t, this.dur); this.action.setEffectiveWeight(1);
       if (this.actionB) this.actionB.setEffectiveWeight(0);
     }
     this.mixer.update(0);
