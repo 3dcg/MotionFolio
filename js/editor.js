@@ -1248,9 +1248,28 @@ function docPanel() {
   rc.addEventListener('change', () => { d.reflow = rc.checked; scheduleSave(); commit(); });
   const reflowChk = h('label', { class: 'chk grow' }, rc, 'スマホでは 1 段組みで表示');
   flow.addEventListener('change', () => { d.flow = flow.value; scheduleSave(); commit(); insp(); });
+  // 書き出す範囲。プレビューもこの範囲で作る
+  const n = d.pages.length, [rf, rt] = exportRange();
+  const setRange = (f, t) => {
+    d.range = f <= 1 && t >= n ? null : { from: f, to: t };
+    scheduleSave(); commit(); insp();
+  };
+  const fromI = h('input', { type: 'number', min: 1, max: n, value: rf }), toI = h('input', { type: 'number', min: 1, max: n, value: rt });
+  const onRange = () => {
+    const f = clamp(Math.round(+fromI.value) || 1, 1, n), t = clamp(Math.round(+toI.value) || n, 1, n);
+    setRange(Math.min(f, t), Math.max(f, t));
+  };
+  fromI.addEventListener('change', onRange); toI.addEventListener('change', onRange);
+  const all = rf === 1 && rt === n;
   return [
     h('div', { class: 'insp-head' }, '書類'),
     sec('書類', row('タイトル', title), row('ページサイズ', size), row('', pair('W', wI), pair('H', hI))),
+    sec('書き出す範囲',
+      row('ページ', pair('', fromI), h('span', { class: 'val', style: 'width:auto' }, '〜'), pair('', toI)),
+      row('', h('div', { class: 'btns' },
+        C.btn('すべて', () => setRange(1, n), { cls: all ? 'on' : '' }),
+        C.btn(`このページ（${state.pageIdx + 1}）`, () => setRange(state.pageIdx + 1, state.pageIdx + 1)))),
+      hint(all ? `全 ${n} ページを書き出します。` : `${n} ページ中 ${rf}〜${rt} ページ（${rt - rf + 1} ページ）を書き出します。ファイル名の末尾に範囲が付きます。`)),
     sec('書き出した HTML の読み方', row('形式', flow), row('背景', vbg), row('', reflowChk),
       hint('スマホでは紙面を縮めず、文字を原寸のまま上から読む順に 1 段で並べ直します。段組みは左の段から読みます。図形は表示しません。「プレビュー」→「スマホで見る」で確かめられます。'),
       hint({ paged: '1 ページずつ表示し、矢印キーやボタンでめくります。', scroll: 'ページを縦に並べ、スクロールで読み進めます。', seamless: 'ページの切れ目をなくし、1 枚の長い紙面として読めます。' }[d.flow || 'scroll'])),
@@ -1450,10 +1469,16 @@ function scheduleSave() {
   saveT = setTimeout(() => idb.put('kv', 'doc', { doc: state.doc, posters, pageIdx: state.pageIdx }), 700);
 }
 
-function usedAssets() {
+function usedAssets(pages = state.doc.pages) {
   const s = new Set();
-  for (const pg of state.doc.pages) for (const el of pg.els) if (el.asset) s.add(el.asset);
+  for (const pg of pages) for (const el of pg.els) if (el.asset) s.add(el.asset);
   return s;
+}
+// 書き出すページの範囲（1 始まり、両端を含む）。ページを消して範囲外になっても収まるように丸める
+function exportRange() {
+  const n = state.doc.pages.length, r = state.doc.range || {};
+  const from = clamp(Math.round(r.from) || 1, 1, n);
+  return [from, clamp(Math.round(r.to) || n, from, n)];
 }
 const blobToDataURL = (blob) => new Promise((res, rej) => {
   const fr = new FileReader();
@@ -1657,7 +1682,7 @@ const READER_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"
 
 async function buildHTML() {
   exitModes();
-  const d = state.doc, used = usedAssets();
+  const d = state.doc, [from, to] = exportRange(), pages = d.pages.slice(from - 1, to), used = usedAssets(pages);
   const urls = new Map(), glbs = [];
   for (const a of assets.values()) {
     if (!used.has(a.id)) continue;
@@ -1666,11 +1691,11 @@ async function buildHTML() {
     else glbs.push(`<script type="application/octet-stream" id="mf-asset-${a.id}">${data.slice(data.indexOf(',') + 1)}</script>\n`);
   }
   const order = new Map();
-  for (const pg of d.pages) readingOrder(pg.els).forEach((el, i) => order.set(el.id, i));
+  for (const pg of pages) readingOrder(pg.els).forEach((el, i) => order.set(el.id, i));
   const ctx = { mode: 'export', img: (id) => urls.get(id) || '', order };
   const reflow = d.reflow !== false;
   const fonts = new Set();
-  for (const pg of d.pages) for (const el of pg.els) if (el.type === 'text' && FONTS[el.font] && FONTS[el.font].g) fonts.add(el.font);
+  for (const pg of pages) for (const el of pg.els) if (el.type === 'text' && FONTS[el.font] && FONTS[el.font].g) fonts.add(el.font);
   const dark = parseInt(d.viewBg.slice(1, 3), 16) < 128, flow = d.flow || 'scroll';
   const pageShadow = '0 1px 3px rgba(0,0,0,.14),0 14px 44px rgba(0,0,0,.16)';
   const css = BASE_CSS + `
@@ -1743,9 +1768,9 @@ if(window.MFV)MFV.autoInit();})();`;
   const parts = [
     `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n<title>${esc(d.title)}</title>\n<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(READER_ICON)}">\n`,
     fonts.size ? `<link rel="stylesheet" href="${fontsHref([...fonts])}">\n` : '',
-    `<style>${css}</style>\n</head>\n<body>\n<header class="mf-bar"><span class="mf-title">${esc(d.title)}</span><span class="mf-nav"><button class="mf-flowbtn" title="スマホ向けの 1 段組みと原寸の紙面を切り替える">1段で読む</button><button class="mf-prev" title="前のページ">‹</button><span class="mf-count">1 / ${d.pages.length}</span><button class="mf-next" title="次のページ">›</button></span></header>\n<main class="mf-doc ${flow}">\n<div class="mf-stack">\n`,
+    `<style>${css}</style>\n</head>\n<body>\n<header class="mf-bar"><span class="mf-title">${esc(d.title)}</span><span class="mf-nav"><button class="mf-flowbtn" title="スマホ向けの 1 段組みと原寸の紙面を切り替える">1段で読む</button><button class="mf-prev" title="前のページ">‹</button><span class="mf-count">1 / ${pages.length}</span><button class="mf-next" title="次のページ">›</button></span></header>\n<main class="mf-doc ${flow}">\n<div class="mf-stack">\n`,
   ];
-  d.pages.forEach((pg, i) => {
+  pages.forEach((pg, i) => {
     parts.push(`<section class="mf-wrap" id="p${i + 1}"><div class="mf-page" style="background:${pg.bg}">\n${pg.els.map((el) => elHTML(el, ctx)).join('\n')}\n</div></section>\n`);
   });
   parts.push('</div>\n</main>\n', ...glbs);
@@ -1755,7 +1780,9 @@ if(window.MFV)MFV.autoInit();})();`;
 }
 async function exportHTML() {
   const blob = await buildHTML();
-  const name = await saveBlob(blob, fileBase() + '.html', { 'text/html': ['.html'] });
+  const [from, to] = exportRange(), all = from === 1 && to === state.doc.pages.length;
+  const suffix = all ? '' : from === to ? `_p${from}` : `_p${from}-${to}`;
+  const name = await saveBlob(blob, fileBase() + suffix + '.html', { 'text/html': ['.html'] });
   if (name) toast(`${name} を書き出しました（${(blob.size / 1048576).toFixed(1)} MB）`);
 }
 async function preview(mobile) {
